@@ -1,0 +1,34 @@
+# Sample Experiment Configuration
+
+experiment_name: "basic_comm_test"
+results_base_dir: "results" # Base directory to store experiment results
+
+agents:
+  blue_agents:
+    - count: 5
+      communication_bandwidth: 15 # Max agents it can talk to per step
+      processing_capability: 50   # Abstract measure of processing power
+    - count: 2
+      communication_bandwidth: 5
+      processing_capability: 100
+
+  red_agents:
+    - count: 10
+      communication_bandwidth: 2
+      processing_capability: 1
+    - count: 3
+      communication_bandwidth: 20
+      processing_capability: 100
+
+environment:
+  # Environment-specific parameters will go here
+  # For example: grid_size, max_steps, reward_structure, etc.
+  env_param_1: "value1"
+  max_cycles: 200 # Max cycles for the simulation loop in main.py
+
+training:
+  # Training-specific parameters
+  # For example: learning_rate, batch_size, num_episodes, algorithm, etc.
+  algorithm: "PPO" # Example
+  num_episodes: 1000
+  learning_rate: 0.0003

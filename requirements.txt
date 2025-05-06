@@ -1,0 +1,15 @@
+# Core dependencies for the MADRL project
+
+PyYAML>=5.4 # For loading YAML configuration files
+pettingzoo>=1.24.3 # For the AEC multi-agent environment API
+gymnasium>=0.28.1 # PettingZoo dependency
+numpy>=1.21 # For numerical operations, especially in environment spaces/observations
+
+# Optional: Add RL libraries later as needed
+# e.g., stable-baselines3>=2.0.0
+# e.g., torch>=2.0.0
+# e.g., tensorflow>=2.10.0
+
+# Optional: Add GNN libraries later if implementing GNN communication
+# e.g., torch-geometric
+# e.g., dgl

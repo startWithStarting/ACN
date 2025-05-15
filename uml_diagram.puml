@@ -1,0 +1,129 @@
+@startuml
+
+title Complete ACN Architecture
+
+package "src.agents" {
+    enum AgentType {
+        BLUE
+        RED
+    }
+    enum CommsType {
+        DIST
+        GRAPH
+    }
+    abstract class BaseAgent {
+        - name: str
+        - agent_type: AgentType
+        - communication_bandwidth: int
+        - processing_capability: int
+        - comms_type: CommsType
+        - x: float  
+        - y: float  
+        - speed: float  
+        - direction: Tuple[float, float]  
+        - is_active: bool  
+        - action_space: spaces.Space  
+        + __init__(name, agent_type, communication_bandwidth, processing_capability, comms_type, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
+        + choose_action(observation)
+        + receive_message(sender_name, message_content)
+        + send_message(recipient_name, message_content)
+        + get_observation(sub_env)
+    }
+    class BlueAgent {
+        - detection_radius: float
+        - observed_red_agents: Dict[str, List[Tuple[Tuple[float, float], float]]]
+        + __init__(name, communication_bandwidth, processing_capability, detection_radius=5.0, comms_type=CommsType.DIST, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
+        + calculate_distance(pos1, pos2): float
+        + is_within_detection_radius(red_agent_pos): bool
+        + record_red_agent_movement(red_agent_name, position, timestamp)
+        + get_observed_paths(): Dict[str, List[Tuple[Tuple[float, float], float]]]
+        + choose_action(observation)
+    }
+    class RedAgent {
+        + __init__(name, communication_bandwidth, processing_capability, comms_type=CommsType.DIST, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
+        + choose_action(observation)
+    }
+    BaseAgent <|-- BlueAgent
+    BaseAgent <|-- RedAgent
+    BaseAgent .. AgentType
+    BaseAgent .. CommsType
+}
+package "src.env" {
+    class AECGameEnv {
+        - metadata: dict
+        - env_config: dict
+        - grid_width: float  
+        - grid_height: float  
+        - save_episode_gifs: bool  
+        - gif_dir: str  
+        - gif_figsize: tuple  
+        - episode_gif_frames: list  
+        - current_episode_number: int  
+        - agent_objects: Dict[str, BaseAgent]
+        - possible_agents: list
+        - agent_name_mapping: dict
+        - agents: list
+        - _agent_selector: AgentSelector
+        - _action_spaces: dict
+        - _observation_spaces: dict
+        - render_mode: str
+        - steps: int
+        - terminations: Dict[str, bool]
+        - truncations: Dict[str, bool]
+        - rewards: Dict[str, float]
+        - _cumulative_rewards: Dict[str, float]
+        - infos: Dict[str, Dict]
+        - agent_selection: str  
+        + __init__(agents, render_mode="human", grid_width=10.0, grid_height=10.0, save_episode_gifs=False, gif_dir="episode_gifs", gif_figsize=(6, 6), max_cycles=100)
+        + observation_space(agent): gym.spaces.Dict
+        + action_space(agent): gym.spaces.Space
+        + observe(agent): dict
+        + reset(seed=None, options=None): Tuple[Dict[str, ndarray], Dict[str, Dict]]
+        + step(action)
+        + render()
+        - _render_text()
+        - _render_matplotlib()
+        - _save_current_episode_gif()
+        + close()
+    }
+    AECGameEnv "1" o-- "many" BaseAgent: manages
+}
+
+package "main" {
+    class main {
+      + main(config_path)
+      + setup_experiment_results_dir(base_results_dir, experiment_name)
+    }
+}
+
+package "training" {
+  class Trainer {
+      - env: AECGameEnv
+      - agents: list
+      - config: dict
+      - results_dir: str
+      + __init__(env, agents: list, config: dict, results_dir: str)
+      + _setup_policies()
+      + train()
+      + save_models(episode_num)
+      + load_models(model_dir)
+      + save_results()
+  }
+  Trainer --> AECGameEnv : uses
+  Trainer --> BaseAgent : uses
+}
+
+package "utils" {
+  class config_loader {
+      + load_config(config_path)
+  }
+}
+
+main ..> config_loader : uses
+main ..> AECGameEnv : creates
+main ..> Trainer : creates
+
+
+
+
+@enduml

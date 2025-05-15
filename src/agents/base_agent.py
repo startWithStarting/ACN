@@ -4,12 +4,19 @@ class AgentType(Enum):
     """Enumeration for different agent types."""
     BLUE = "blue"
     RED = "red"
+class CommsType(Enum):
+    CENT = 'centralised'
+    DIST = 'distributed'
+
+import numpy as np # Import numpy for vector operations if needed later
+from typing import Tuple, Optional # For type hinting
+import gymnasium.spaces as spaces # Import gymnasium spaces
 
 class BaseAgent:
     """
     Base class for all agents in the simulation.
     """
-    def __init__(self, name: str, agent_type: AgentType, communication_bandwidth: int, processing_capability: int):
+    def __init__(self, name: str, agent_type: AgentType, communication_bandwidth: int, processing_capability: int, comms_type: CommsType = CommsType.DIST, x: float = None, y: float = None, speed: float = 0.0, direction: Optional[Tuple[float, float]] = None):
         """
         Initializes a base agent.
 
@@ -19,40 +26,71 @@ class BaseAgent:
             communication_bandwidth (int): An abstract measure of communication capacity
                                            (e.g., max number of agents to communicate with).
             processing_capability (int): An abstract measure of computational power.
+            comms_type (CommsType): The communication type of the agent.
+            x (float, optional): The x-coordinate of the agent. Defaults to None.
+            y (float, optional): The y-coordinate of the agent. Defaults to None.
+            speed (float, optional): The movement speed of the agent. Defaults to 0.0.
+            direction (Optional[Tuple[float, float]], optional): The movement direction (normalized vector) of the agent. Defaults to None.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("Agent name must be a non-empty string.")
         if not isinstance(agent_type, AgentType):
             raise ValueError("Agent type must be an instance of AgentType enum.")
+        if not isinstance(comms_type, CommsType):
+            raise ValueError("Comms type must be an instance of CommsType enum.")        
         if not isinstance(communication_bandwidth, int) or communication_bandwidth < 0:
             raise ValueError("Communication bandwidth must be a non-negative integer.")
         if not isinstance(processing_capability, int) or processing_capability < 0:
             raise ValueError("Processing capability must be a non-negative integer.")
+        if not isinstance(speed, (int, float)) or speed < 0:
+            raise ValueError("Speed must be a non-negative number.")
+        if direction is not None:
+            if not isinstance(direction, (list, tuple)) or len(direction) != 2:
+                 raise ValueError("Direction must be a tuple or list of two numbers.")
+            # Optional: Add check for normalization if strictly required upon init
+            # norm = np.linalg.norm(direction)
+            # if not np.isclose(norm, 1.0):
+            #     raise ValueError("Direction vector must be normalized.")
+
 
         self.name = name
         self.agent_type = agent_type
+        self.comms_type = comms_type
         self.communication_bandwidth = communication_bandwidth
         self.processing_capability = processing_capability
+        self.x = x
+        self.y = y
+        self.speed = speed
+        self.direction = tuple(direction) if direction else None # Store as tuple if provided
         # Add other common agent state variables here if needed
-        # e.g., self.position, self.health, self.current_observation, etc.
+        # e.g., self.health, self.current_observation, etc.
         self.is_active = True # Flag to indicate if the agent is currently active in the env
 
-    def get_observation(self):
+        # Define a default action space (can be overridden by subclasses)
+        self.action_space = spaces.Discrete(2) # Example: Simple discrete space
+
+    def get_observation(self, sub_env):
         """
         Returns the agent's current observation of the environment.
         This should be implemented by subclasses or the environment itself.
         """
-        # Placeholder: In a real scenario, this would return relevant state info
-        raise NotImplementedError("get_observation() must be implemented by the environment or specific agent logic.")
-
-    def choose_action(self, observation):
+        pass
+        
+    def choose_action(self, observation=None):
         """
         Determines the agent's next action based on the observation.
         This will typically involve the RL policy.
+
+        Args:
+            observation: The agent's observation of the environment state.
+                        Defaults to None for backward compatibility.
+
+        Returns:
+            The chosen action.
         """
         # Placeholder: The actual policy network will go here (likely managed by the Trainer)
         raise NotImplementedError("choose_action() must be implemented, likely linking to an RL policy.")
-
+    
     def receive_message(self, sender_name: str, message_content: dict):
         """
         Handles receiving a message from another agent.
@@ -70,7 +108,11 @@ class BaseAgent:
         # The environment will likely mediate the actual delivery.
 
     def __str__(self):
-        return f"Agent(Name: {self.name}, Type: {self.agent_type.value}, CommBW: {self.communication_bandwidth}, ProcCap: {self.processing_capability})"
+        position_str = f", Pos: ({self.x:.2f}, {self.y:.2f})" if self.x is not None and self.y is not None else ""
+        movement_str = f", Speed: {self.speed:.2f}, Dir: {self.direction}" if self.direction else ""
+        return f"Agent(Name: {self.name}, Type: {self.agent_type.value}, Comms: {self.comms_type.value}, CommBW: {self.communication_bandwidth}, ProcCap: {self.processing_capability}{position_str}{movement_str})"
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(name='{self.name}', agent_type=AgentType.{self.agent_type.name}, communication_bandwidth={self.communication_bandwidth}, processing_capability={self.processing_capability})"
+        position_repr = f", x={self.x}, y={self.y}" if self.x is not None and self.y is not None else ""
+        movement_repr = f", speed={self.speed}, direction={self.direction}" if self.direction else "" # Simplified for repr
+        return f"{self.__class__.__name__}(name='{self.name}', agent_type=AgentType.{self.agent_type.name}, communication_bandwidth={self.communication_bandwidth}, processing_capability={self.processing_capability}{position_repr}{movement_repr})"

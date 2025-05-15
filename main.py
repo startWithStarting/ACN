@@ -5,7 +5,7 @@ from datetime import datetime
 
 from src.utils.config_loader import load_config
 from src.env.aec_env import AECGameEnv
-from src.agents.base_agent import AgentType
+
 from src.agents.red_agent import RedAgent
 from src.agents.blue_agent import BlueAgent
 # from src.training.trainer import Trainer # To be uncommented later
@@ -70,54 +70,45 @@ def main(config_path):
     # 2. Set up the game environment
     env_config = config.get("environment", {})
     # Pass agent instances to the environment
+    env_config["experiment_results_dir"] = results_dir # Pass the full results path for this run
     env = AECGameEnv(agents=all_agents, **env_config)
     print("Game environment created.")
 
-    # 3. Initiate the training process (Placeholder)
-    # training_config = config.get("training", {})
-    # trainer = Trainer(env, all_agents, training_config, results_dir)
-    # print("Initializing training...")
-    # trainer.train() # This will be the main training loop
-
-    # For now, let's just simulate some environment steps
-    print("\nSimulating environment steps (PettingZoo AEC style):")
+    # 3. Simulate environment steps
+    print("\nSimulating environment steps:")
     env.reset()
-    max_cycles = env_config.get("max_cycles", 100) # Get max_cycles from config or default
-    for agent_name in env.agent_iter(max_iter=max_cycles * len(all_agents)): # Iterate through agents
-        observation, reward, terminated, truncated, info = env.last()
+    max_cycles = env_config.get("max_cycles", 100)
+    
+    # Manually iterate through agents to ensure proper cycling
+    for cycle in range(max_cycles):
+        for agent_name in env.agents:
+            # Set the current agent selection
+            env.agent_selection = agent_name
+            
+            # Get observation from the environment
+            observation = env.observe(agent_name)
+            terminated = env.terminations[agent_name]
+            truncated = env.truncations[agent_name]
+            
+            if terminated or truncated:
+                action = None # No action if agent is done
+            else:
+                # Get the agent object and use its choose_action method
+                agent_obj = env.agent_objects[agent_name]
+                action = agent_obj.choose_action(observation)
 
-        if terminated or truncated:
-            print(f"Agent {agent_name} finished. Terminated: {terminated}, Truncated: {truncated}")
-            action = None # No action if agent is done
-        else:
-            # Here, the RL agent would choose an action based on the observation
-            # For now, sample a random action if action space is available
-            if env.action_space(agent_name):
-                 action = env.action_space(agent_name).sample()
-                 print(f"Agent {agent_name} taking action: {action}")
-            else: # Should not happen if agent is not done
-                action = None
-                print(f"Agent {agent_name} has no action space but is not done. This is unexpected.")
-
-
-        if action is None and not (terminated or truncated):
-            # This handles the case where an agent might be "skipped" if it's not its turn or some other logic
-            # In AEC, env.last() gives the current agent that needs to act.
-            # If an agent is done, it won't be selected by agent_iter for action.
-            # However, if an agent is selected but cannot act (e.g. action space is None),
-            # we might need to pass a None action or handle it specifically.
-            # PettingZoo's step(None) is often used to signify no action or to pass control.
-            print(f"Agent {agent_name} takes no action (or is done).")
-
-
-        env.step(action)
+            env.step(action)
+            
+        # Check if all agents are done
+        if all(env.terminations.values()) or all(env.truncations.values()):
+            print("All agents are done. Breaking out of simulation loop.")
+            break
 
     env.close()
     print("\nEnvironment simulation finished.")
 
-    # 4. Save results (Placeholder)
-    print(f"Results for experiment '{experiment_name}' would be saved in '{results_dir}'.")
-    # Example: trainer.save_results()
+    # 4. Save results
+    print(f"Results for experiment '{experiment_name}' saved in '{results_dir}'.")
 
     print("Experiment finished.")
 

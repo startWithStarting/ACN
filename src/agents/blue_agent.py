@@ -4,6 +4,7 @@ from collections import defaultdict
 from sklearn.linear_model import LinearRegression
 
 from .base_agent import BaseAgent, AgentType
+from ..utils.regressor import VectorAutoRegressor
 
 class BlueAgent(BaseAgent):
     """
@@ -37,6 +38,12 @@ class BlueAgent(BaseAgent):
         # Dictionary to store predicted positions for each red agent
         # Key: Red agent name, Value: List of predicted future positions [(x1, y1), (x2, y2), ...]
         self.predicted_positions = defaultdict(list)
+        
+        # Dictionaries to store history of actual and predicted positions with timestamps
+        # Key: Red agent name, Value: List of (position, timestamp) tuples
+        self.actual_position_history = defaultdict(list)
+        # Key: Red agent name, Value: List of (predicted_position, timestamp) tuples
+        self.prediction_history = defaultdict(list)
 
     def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
         """
@@ -68,13 +75,9 @@ class BlueAgent(BaseAgent):
     def record_red_agent_movement(self, red_agent_name: str, position: Tuple[float, float], timestamp: float):
         """
         Record the movement of a Red agent if it's within detection radius.
-
-        Args:
-            red_agent_name (str): Name of the Red agent
-            position (Tuple[float, float]): Current position of the Red agent
-            timestamp (float): Current simulation timestamp
+        Only record if the position is not (0,0) and is a real detection.
         """
-        if self.is_within_detection_radius(position):
+        if position is not None and not (position[0] == 0 and position[1] == 0):
             self.observed_red_agents[red_agent_name].append((position, timestamp))
 
     def get_observed_paths(self) -> Dict[str, List[Tuple[Tuple[float, float], float]]]:
@@ -102,103 +105,80 @@ class BlueAgent(BaseAgent):
         if red_agent_name not in self.observed_red_agents or \
            len(self.observed_red_agents[red_agent_name]) < 2:
             return False
-            
-        # Extract position data from observations
-        positions = [pos for pos, _ in self.observed_red_agents[red_agent_name]]
-        positions_array = np.array(positions)  # Shape: (num_observations, 2) for [x, y] coordinates
-        
-        # Determine how many past steps to use based on processing_capability,
-        # but limited by available data minus one (for target)
-        n = min(self.processing_capability, len(positions) - 1)  
-        
-        # Cannot predict with less than 2 points
+        positions = [pos for pos, _ in self.observed_red_agents[red_agent_name] if not (pos[0] == 0 and pos[1] == 0)]
+        positions_array = np.array(positions)  # (num_observations, 2)
+        n = min(self.processing_capability, len(positions) - 1)
         if n < 1:
             return False
-            
-        # Prepare training data
-        X = []  # Features: sequences of n past positions
-        y = []  # Targets: next position
-        
-        # For each position except the first n, use the previous n positions to predict it
-        for i in range(n, len(positions)):
-            # Past n positions flattened to a feature vector
-            past_positions = positions_array[i-n:i].flatten()  # [x1, y1, x2, y2, ..., xn, yn]
-            X.append(past_positions)
-            y.append(positions_array[i])  # Target: current [x, y] position
-        
-        # Convert to numpy arrays
+        if len(positions_array) < n + 1:
+            return False
+        # Build windowed X and y
+        X = []
+        y = []
+        for i in range(len(positions_array) - n):
+            X.append(positions_array[i:i+n].flatten())  # shape (n*2,)
+            y.append(positions_array[i+n])              # shape (2,)
         X = np.array(X)
         y = np.array(y)
-        
-        # Train model to predict [x, y] coordinates directly
-        model = LinearRegression()
-        
+        # print(f'Fitting VAR: X shape {X.shape}, y shape {y.shape}')
         try:
-            model.fit(X, y)  # Model predicts [x, y] as a single unit
-            
-            # Store model
+            model = VectorAutoRegressor(n_lags=n)
+            model.fit(X, y)
             self.prediction_models[red_agent_name] = model
             return True
         except Exception as e:
             print(f"Error fitting prediction model for {red_agent_name}: {e}")
             return False
             
-    def predict_future_position(self, red_agent_name: str, steps_ahead: int = 1) -> Optional[Tuple[float, float]]:
+    def predict_future_position(self, red_agent_name: str, steps_ahead: int = 1, current_time: float = None) -> Optional[Tuple[float, float]]:
         """
         Predicts the future position of a red agent based on its observed path.
-        
+        If the last observation is more than 3 time steps before the current time, do not predict.
         Args:
             red_agent_name (str): Name of the Red agent to predict position for
             steps_ahead (int): Number of steps into the future to predict. Defaults to 1.
-            
+            current_time (float, optional): The current simulation time. If None, disables the time check.
         Returns:
             Optional[Tuple[float, float]]: Predicted (x, y) position or None if prediction couldn't be made
         """
-        # Check if we already have a prediction for this agent and steps_ahead
-        if red_agent_name in self.predicted_positions and len(self.predicted_positions[red_agent_name]) >= steps_ahead:
+        if red_agent_name not in self.predicted_positions:
+            self.predicted_positions[red_agent_name] = []
+        if len(self.predicted_positions[red_agent_name]) >= steps_ahead:
             return self.predicted_positions[red_agent_name][steps_ahead-1]
-            
-        # Need at least 2 points to make a prediction
-        observations = self.observed_red_agents.get(red_agent_name, [])
+        observations = [obs for obs in self.observed_red_agents.get(red_agent_name, []) if not (obs[0][0] == 0 and obs[0][1] == 0)]
         if len(observations) < 2:
+            if observations:
+                last_pos, _ = observations[-1]
+                return last_pos
             return None
-            
-        # Check if we have a model for this red agent
-        if red_agent_name not in self.prediction_models:
-            # Try to fit a model first
-            if not self.fit_prediction_model(red_agent_name):
+        # Check time gap: if current_time is provided and last observation is too old, do not predict
+        if current_time is not None:
+            last_obs_time = observations[-1][1]
+            if current_time - last_obs_time > 3:
                 return None
-                
-        # Get number of past positions to use based on processing_capability
+        if red_agent_name not in self.prediction_models:
+            if not self.fit_prediction_model(red_agent_name):
+                last_pos, _ = observations[-1]
+                return last_pos
         n = min(self.processing_capability, len(observations) - 1)
-        
-        # Cannot predict with less than 2 points
         if n < 1:
             return None
-            
-        # Get the most recent n positions
-        recent_positions = np.array([pos for pos, _ in observations[-n:]])
-        
-        # Create feature vector from recent positions
-        features = recent_positions.flatten().reshape(1, -1)  # Reshape to (1, 2*n) for sklearn
-        
-        # Get the prediction model
+        recent_positions = np.array([pos for pos, _ in observations])
+        if recent_positions.shape[0] < n:
+            return None
+        # Use the last n positions for prediction
+        features = recent_positions[-n:]  # shape (n, 2)
         model = self.prediction_models[red_agent_name]
-        
-        # Make prediction
-        predicted_position = model.predict(features)[0]  # Returns [x, y] coordinates
-        
-        # For multiple steps ahead prediction
-        for _ in range(1, steps_ahead):
-            # Update features by removing oldest position and adding predicted position
-            features = features.flatten()
-            features = np.concatenate([features[2:], predicted_position]).reshape(1, -1)
-            
-            # Make next prediction
-            predicted_position = model.predict(features)[0]
-        
-        return tuple(predicted_position)
-
+        try:
+            predicted_position = model.predict(features)
+            for _ in range(1, steps_ahead):
+                features = np.vstack([features[1:], predicted_position])
+                predicted_position = model.predict(features)
+            return tuple(predicted_position)
+        except Exception as e:
+            # print(f"Error in prediction for {red_agent_name}: {e}")
+            last_pos, _ = observations[-1]
+            return last_pos
     def choose_action(self, observation=None):
         """
         Chooses an action for the Blue agent.
@@ -221,7 +201,12 @@ class BlueAgent(BaseAgent):
             # Record movements of Red agents within detection radius
             for red_name, red_data in red_agents.items():
                 if 'position' in red_data:
-                    self.record_red_agent_movement(red_name, red_data['position'], timestamp)
+                    position = red_data['position']
+                    # Only record if the red agent is within detection radius and not (0,0)
+                    if self.is_within_detection_radius(position) and not (position[0] == 0 and position[1] == 0):
+                        self.record_red_agent_movement(red_name, position, timestamp)
+                        self.actual_position_history[red_name].append((position, timestamp))
+                        # print(f"DEBUG: {self.name} detected {red_name} at position {position} at time {timestamp}")
             
             # Clear previous predictions
             self.predicted_positions.clear()
@@ -235,10 +220,16 @@ class BlueAgent(BaseAgent):
                     
                     # If model was successfully fitted, make predictions for future positions
                     if model_fitted or red_name in self.prediction_models:
-                        # Store predictions for the next 5 steps
+                        # Make prediction for the next step (steps_ahead=1)
+                        next_step_prediction = self.predict_future_position(red_name, 1, current_time=timestamp)
+                        if next_step_prediction is not None and not (next_step_prediction[0] == 0 and next_step_prediction[1] == 0):
+                            self.prediction_history[red_name].append((next_step_prediction, timestamp))
+                            # print(f"DEBUG: {self.name} predicted {red_name} will be at {next_step_prediction} at time {timestamp}")
+                            
+                        # Store predictions for the next 5 steps (for visualization)
                         future_positions = []
                         for steps_ahead in range(1, 6):
-                            future_pos = self.predict_future_position(red_name, steps_ahead)
+                            future_pos = self.predict_future_position(red_name, steps_ahead, current_time=timestamp)
                             if future_pos is not None:
                                 future_positions.append(future_pos)
                         

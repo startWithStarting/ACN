@@ -39,7 +39,7 @@ class AECGameEnv(AECEnv):
         "render_modes": ["human", "human_matplotlib", "human_matplotlib_pred"],
         "name": "communicating_agents_v0",
         "is_parallelizable": False, # Usually True if step() doesn't depend on agent order
-        "render_fps": 100,
+        "render_fps": 40,
     }
 
     def __init__(self, agents: list[BaseAgent], render_mode=None, **env_config):
@@ -76,7 +76,7 @@ class AECGameEnv(AECEnv):
                 self.gif_dir = os.path.join(experiment_run_dir, "gifs")
                 os.makedirs(self.gif_dir, exist_ok=True)
             else:
-                print("Warning: 'save_episode_gifs' is True, but 'experiment_results_dir' was not provided in env_config. Disabling GIF saving.")
+                # print("Warning: 'save_episode_gifs' is True, but 'experiment_results_dir' was not provided in env_config. Disabling GIF saving.")
                 self.save_episode_gifs = False
 
         # --- Grid Initialization ---
@@ -277,6 +277,9 @@ class AECGameEnv(AECEnv):
 
         # PZ utility: Accumulate rewards correctly for the next call to last()
         self._accumulate_rewards()
+        
+        # Select the next agent using PettingZoo's agent selector
+        self.agent_selection = self._agent_selector.next()
 
         # Call render if a human-viewable mode is active
         if self.render_mode in ["human", "human_matplotlib", "human_matplotlib_pred"]:
@@ -287,9 +290,9 @@ class AECGameEnv(AECEnv):
         Renders the environment.
         """
         if self.render_mode is None:
-            gymnasium.logger.warn(
-                "You are calling render method without specifying any render mode."
-            )
+            # gymnasium.logger.warn(
+            #     "You are calling render method without specifying any render mode."
+            # )
             return
 
         # Add custom rendering modes as needed
@@ -304,17 +307,17 @@ class AECGameEnv(AECEnv):
 
     def _render_text(self):
         """Text-based rendering for debugging."""
-        print("\n--- Rendering Frame ---")
-        print(f"Step: {self.steps}")
-        print(f"Grid Dimensions: W={self.grid_width}, H={self.grid_height}")
-        print(f"Current Agent: {self.agent_selection}")
-        print("Agent States:")
+        # print("\n--- Rendering Frame ---")
+        # print(f"Step: {self.steps}")
+        # print(f"Grid Dimensions: W={self.grid_width}, H={self.grid_height}")
+        # print(f"Current Agent: {self.agent_selection}")
+        # print("Agent States:")
         for name in self.possible_agents:  # Iterate in defined order
             agent_obj = self.agent_objects[name]
             state = "Done" if (self.terminations[name] or self.truncations[name]) else "Active"
             position_str = f", Pos: ({agent_obj.x:.2f}, {agent_obj.y:.2f})" if agent_obj.x is not None and agent_obj.y is not None else ""
-            print(f"  - {name}: Reward={self._cumulative_rewards[name]:.2f}, State={state}{position_str}")
-        print("-----------------------\n")
+            # print(f"  - {name}: Reward={self._cumulative_rewards[name]:.2f}, State={state}{position_str}")
+        # print("-----------------------\n")
 
     def _render_matplotlib(self, show_predictions=False):
         """Matplotlib rendering for visualization."""
@@ -331,16 +334,21 @@ class AECGameEnv(AECEnv):
             is_done = self.terminations.get(name, True) or self.truncations.get(name, True)
             if not is_done and hasattr(agent_obj, 'x') and hasattr(agent_obj, 'y') \
                and agent_obj.x is not None and agent_obj.y is not None:
-                
                 color = 'grey' # Default color
+                agent_number = ''
                 if hasattr(agent_obj, 'agent_type') and hasattr(agent_obj.agent_type, 'value'):
                     agent_type_val = agent_obj.agent_type.value
                     if agent_type_val == 'blue':
                         color = 'blue'
                     elif agent_type_val == 'red':
                         color = 'red'
-
-                ax.plot(agent_obj.x, agent_obj.y, marker='o', markersize=8, color=color, label=name)
+                    # Extract number from agent name (e.g., blue_2 -> 2)
+                    if '_' in name:
+                        agent_number = name.split('_')[-1]
+                    else:
+                        agent_number = name
+                # Plot agent number as text at its position
+                ax.text(agent_obj.x, agent_obj.y, agent_number, color=color, fontsize=14, fontweight='bold', ha='center', va='center')
                 something_plotted = True
 
                 # --- Plot scatter of detected red agent paths for BlueAgents ---
@@ -396,11 +404,11 @@ class AECGameEnv(AECEnv):
                 buf.seek(0)
                 frame = imageio.imread(buf)
                 self.episode_gif_frames.append(frame)
-                print(f"[GIF DEBUG] Frame added. Total frames: {len(self.episode_gif_frames)}")
+                # print(f"[GIF DEBUG] Frame added. Total frames: {len(self.episode_gif_frames)}")
                 buf.close()
             except Exception as e:
                 import traceback
-                print(f"[GIF ERROR] Error capturing frame for GIF: {e}")
+                # print(f"[GIF ERROR] Error capturing frame for GIF: {e}")
                 traceback.print_exc()
             finally:
                 plt.close(fig) # Close the figure to free memory
@@ -412,18 +420,18 @@ class AECGameEnv(AECEnv):
     def _save_current_episode_gif(self):
         """Saves the collected frames as a GIF for the current episode."""
         if not self.save_episode_gifs or not self.episode_gif_frames:
-            print(f"[GIF SAVE] Skipping GIF save: save_episode_gifs={self.save_episode_gifs}, frames={len(self.episode_gif_frames)}")
+            # print(f"[GIF SAVE] Skipping GIF save: save_episode_gifs={self.save_episode_gifs}, frames={len(self.episode_gif_frames)}")
             return
 
         gif_filename = os.path.join(self.gif_dir, f"episode_{self.current_episode_number}.gif")
-        print(f"[GIF SAVE] Attempting to save GIF to: {gif_filename}")
+        # print(f"[GIF SAVE] Attempting to save GIF to: {gif_filename}")
         try:
             frame_duration = 1.0 / self.metadata.get("render_fps", 10) # seconds per frame
             imageio.mimsave(gif_filename, self.episode_gif_frames, duration=frame_duration*1000, loop=0) # duration in ms for mimsave
-            print(f"[GIF SAVE] GIF saved successfully: {gif_filename}")
+            # print(f"[GIF SAVE] GIF saved successfully: {gif_filename}")
         except Exception as e:
             import traceback
-            print(f"[GIF ERROR] Error saving GIF {gif_filename}: {e}")
+            # print(f"[GIF ERROR] Error saving GIF {gif_filename}: {e}")
             traceback.print_exc()
 
     def close(self):

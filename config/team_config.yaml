@@ -1,0 +1,39 @@
+# Team Strategy Configuration
+
+experiment_name: "team_strategy_test"
+results_base_dir: "results" # Base directory to store experiment results
+
+agents:
+  blue_agents:
+    - count: 2
+      communication_bandwidth: 15 # Max agents it can talk to per step
+      processing_capability: 5   # Max past time steps it can use for prediction
+      detection_radius: 20.0     # Radius within which the agent can detect Red agents
+    - count: 2
+      communication_bandwidth: 5
+      processing_capability: 2
+      detection_radius: 15.0     # Different detection radius for this group
+
+  red_agents:
+    - count: 8  # All red agents use team-based strategy
+      communication_bandwidth: 5
+      processing_capability: 3
+      detection_radius: 20.0
+      strategy_type: "team"  # Move toward red teammates
+
+environment:
+  # Environment-specific parameters will go here
+  width: 100  # Width (W) of the Cartesian grid
+  height: 80  # Height (H) of the Cartesian grid
+  render_mode: "human_matplotlib_pred" # Enable rendering with predictions
+  save_episode_gifs: True 
+  # For example: grid_size, max_steps, reward_structure, etc.
+  env_param_1: "value1" # Existing example parameter
+  max_cycles: 50 # Max cycles for the simulation loop in main.py
+
+training:
+  # Training-specific parameters
+  # For example: learning_rate, batch_size, num_episodes, algorithm, etc.
+  algorithm: "PPO" # Example
+  num_episodes: 1
+  learning_rate: 0.0003

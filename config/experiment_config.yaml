@@ -11,16 +11,30 @@ agents:
       detection_radius: 20.0      # Radius within which the agent can detect Red agents
     - count: 2
       communication_bandwidth: 5
-      processing_capability: 3
+      processing_capability: 2
       detection_radius: 15.0      # Different detection radius for this group
 
   red_agents:
     - count: 2
       communication_bandwidth: 2
-      processing_capability: 1
+      processing_capability: 2
+      detection_radius: 15.0
+      strategy_type: "center"  # Basic center-based movement
     - count: 2
-      communication_bandwidth: 20
-      processing_capability: 100
+      communication_bandwidth: 5
+      processing_capability: 2
+      detection_radius: 20.0
+      strategy_type: "avoidant"  # Detect and avoid blue agents
+    - count: 2
+      communication_bandwidth: 10
+      processing_capability: 3
+      detection_radius: 25.0
+      strategy_type: "aggressive"  # Detect and pursue blue agents
+    - count: 2
+      communication_bandwidth: 15
+      processing_capability: 4
+      detection_radius: 30.0
+      strategy_type: "team"  # Move toward red teammates
 
 environment:
   # Environment-specific parameters will go here

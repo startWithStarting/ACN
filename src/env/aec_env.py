@@ -153,14 +153,18 @@ class AECGameEnv(AECEnv):
         agent_pos = np.array([agent_obj.x, agent_obj.y], dtype=np.float32)
         grid_center = np.array([self.grid_width / 2, self.grid_height / 2], dtype=np.float32)
 
-        # Build base observation
         observation = {
             'position': agent_pos,
             'grid_center': grid_center
         }
 
-        # If agent is a BlueAgent, add red_agents info and timestamp
+        # Add timestamp to all observations
+        observation['timestamp'] = self.steps
+        
+        # Add agent-specific information
         agent_obj = self.agent_objects[agent]
+        
+        # If agent is a BlueAgent, add red_agents info
         if hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'blue':
             # Gather red agent positions
             red_agents_info = {}
@@ -169,7 +173,26 @@ class AECGameEnv(AECEnv):
                     if hasattr(red_obj, 'x') and hasattr(red_obj, 'y') and red_obj.x is not None and red_obj.y is not None:
                         red_agents_info[red_name] = {'position': (red_obj.x, red_obj.y)}
             observation['red_agents'] = red_agents_info
-            observation['timestamp'] = self.steps
+        
+        # If agent is a RedAgent, add blue_agents info and red_teammates info
+        elif hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'red':
+            # Gather blue agent positions
+            blue_agents_info = {}
+            for blue_name, blue_obj in self.agent_objects.items():
+                if hasattr(blue_obj, 'agent_type') and getattr(blue_obj.agent_type, 'value', None) == 'blue':
+                    if hasattr(blue_obj, 'x') and hasattr(blue_obj, 'y') and blue_obj.x is not None and blue_obj.y is not None:
+                        blue_agents_info[blue_name] = {'position': (blue_obj.x, blue_obj.y)}
+            observation['blue_agents'] = blue_agents_info
+            
+            # Gather red teammate positions (excluding self)
+            red_teammates_info = {}
+            for red_name, red_obj in self.agent_objects.items():
+                if (red_name != agent and  # not self
+                    hasattr(red_obj, 'agent_type') and getattr(red_obj.agent_type, 'value', None) == 'red' and
+                    hasattr(red_obj, 'x') and hasattr(red_obj, 'y') and
+                    red_obj.x is not None and red_obj.y is not None):
+                    red_teammates_info[red_name] = {'position': (red_obj.x, red_obj.y)}
+            observation['red_teammates'] = red_teammates_info
 
         return observation
 
@@ -226,8 +249,8 @@ class AECGameEnv(AECEnv):
         current_agent_obj = self.agent_objects[agent_name]
 
         # Process the action based on agent type
-        if current_agent_obj.agent_type == AgentType.RED:
-            # For RED agents, handle the composite action (direction + speed)
+        if current_agent_obj.agent_type in [AgentType.RED, AgentType.BLUE]:
+            # For RED and BLUE agents, handle the composite action (direction + speed)
             if isinstance(action, dict) and 'direction' in action and 'speed' in action:
                 direction = action['direction']
                 speed = action['speed']
@@ -252,10 +275,10 @@ class AECGameEnv(AECEnv):
                 # Simple reward for now (can be customized based on game mechanics)
                 reward = 0
             else:
-                # Invalid action format for RED agent
+                # Invalid action format for agent
                 reward = -1  # Penalty for invalid action
         else:
-            # For non-RED agents, use the existing placeholder logic
+            # For other agent types, use the existing placeholder logic
             reward = 0
             if action == 1:
                 reward = 1

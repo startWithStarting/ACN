@@ -189,18 +189,22 @@ def main(config_path):
         count = spec.get("count", 0)
         communication_bandwidth = spec.get("communication_bandwidth", 0)
         processing_capability = spec.get("processing_capability", 0)
+        detection_radius = spec.get("detection_radius", 20.0)
         for _ in range(count):
             agent_name = f"blue_{agent_id_counter}"
-            all_agents.append(BlueAgent(agent_name, communication_bandwidth, processing_capability))
+            all_agents.append(BlueAgent(agent_name, communication_bandwidth, processing_capability, detection_radius))
             agent_id_counter += 1
 
     for spec in red_agents_specs:
         count = spec.get("count", 0)
         communication_bandwidth = spec.get("communication_bandwidth", 0)
         processing_capability = spec.get("processing_capability", 0)
+        detection_radius = spec.get("detection_radius", 15.0)
+        strategy_type = spec.get("strategy_type", "center")
         for _ in range(count):
             agent_name = f"red_{agent_id_counter}"
-            all_agents.append(RedAgent(agent_name, communication_bandwidth, processing_capability))
+            all_agents.append(RedAgent(agent_name, communication_bandwidth, processing_capability, 
+                                     detection_radius, strategy_type))
             agent_id_counter += 1
     
     if not all_agents:
@@ -246,14 +250,14 @@ def main(config_path):
                 action = agent_obj.choose_action(observation)
                 
                 # Debug information for Blue agents
-                if hasattr(agent_obj, 'agent_type') and agent_obj.agent_type.value == 'blue':
-                    if hasattr(agent_obj, 'actual_position_history'):
-                        for red_name, positions in agent_obj.actual_position_history.items():
-                            print(f"  {agent_name} is tracking {red_name}: {len(positions)} actual positions")
+                # if hasattr(agent_obj, 'agent_type') and agent_obj.agent_type.value == 'blue':
+                #     if hasattr(agent_obj, 'actual_position_history'):
+                #         for red_name, positions in agent_obj.actual_position_history.items():
+                #             #print(f"  {agent_name} is tracking {red_name}: {len(positions)} actual positions")
                     
-                    if hasattr(agent_obj, 'prediction_history'):
-                        for red_name, predictions in agent_obj.prediction_history.items():
-                            print(f"  {agent_name} has {len(predictions)} predictions for {red_name}")
+                #     if hasattr(agent_obj, 'prediction_history'):
+                #         for red_name, predictions in agent_obj.prediction_history.items():
+                #             #print(f"  {agent_name} has {len(predictions)} predictions for {red_name}")
 
             # Take the step which will automatically update agent_selection to the next agent
             env.step(action)

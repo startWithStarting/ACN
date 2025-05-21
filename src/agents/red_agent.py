@@ -1,13 +1,21 @@
 import numpy as np
 from typing import Tuple, Dict, Any
+from collections import defaultdict
 from .base_agent import BaseAgent, AgentType, CommsType # Import CommsType if used in __str__
 import gymnasium.spaces as spaces # Import gymnasium spaces
+
+# Import all available strategies
+from .strategies.red_agent_strategy import center_based_movement_strategy
+from .strategies.avoidant_red_strategy import avoidant_red_strategy
+from .strategies.aggressive_red_strategy import aggressive_red_strategy
+from .strategies.team_based_red_strategy import team_based_red_strategy
 
 class RedAgent(BaseAgent):
     """
     Represents a Red agent in the simulation.
     """
-    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int):
+    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, 
+                 detection_radius: float = 15.0, strategy_type: str = "center"):
         """
         Initializes a Red agent.
 
@@ -15,6 +23,12 @@ class RedAgent(BaseAgent):
             name (str): A unique identifier for the agent.
             communication_bandwidth (int): Communication capacity.
             processing_capability (int): Computational power.
+            detection_radius (float): Radius within which the agent can detect other agents.
+            strategy_type (str): Movement strategy to use. Options are:
+                                  "center" - Basic movement around center
+                                  "avoidant" - Detect and avoid blue agents
+                                  "aggressive" - Detect and pursue blue agents
+                                  "team" - Move toward red teammates
         """
         super().__init__(
             name=name,
@@ -35,20 +49,34 @@ class RedAgent(BaseAgent):
             'speed': spaces.Discrete(11, start=-5)  # Represents integers from -5 to 5
         })
 
-        # Add any Red-agent-specific attributes or methods here
-        # For example:
-        # self.special_red_ability_cooldown = 0
+        # Add detection radius for finding other agents
+        self.detection_radius = detection_radius
+        
+        # Set the movement strategy type
+        self.strategy_type = strategy_type
+        
+        # Dictionary to store observed red teammate paths
+        # Key: Teammate name, Value: List of (position, timestamp) tuples
+        self.observed_teammates = defaultdict(list)
 
+    def record_teammate_movement(self, teammate_name: str, position: Tuple[float, float], timestamp: float):
+        """
+        Record the movement of a red teammate if it's within detection radius.
+        Only record if the position is not (0,0) and is a real detection.
+        """
+        if position is not None and not (position[0] == 0 and position[1] == 0):
+            self.observed_teammates[teammate_name].append((position, timestamp))
+            
     def choose_action(self, observation=None):
         """
-        Chooses an action based on a rule: move towards the center of the grid, but maintain a minimum
-        distance of 10 units from the center. Speed is proportional to the distance from the center.
-        When closer than 10 units, the agent is repelled away from the center.
+        Chooses an action for the Red agent by delegating to a strategy.
 
         Args:
             observation (Dict[str, Any], optional): The agent's observation, expected to contain
-                                          'position' (Tuple[float, float]) and
-                                          'grid_center' (Tuple[float, float]).
+                                          'position' (Tuple[float, float]),
+                                          'grid_center' (Tuple[float, float]),
+                                          'blue_agents' (Dict[str, Dict]),
+                                          and 'red_teammates' (Dict[str, Dict]).
                                           Defaults to None for backward compatibility.
 
         Returns:
@@ -60,53 +88,62 @@ class RedAgent(BaseAgent):
 
         current_pos = observation.get('position')
         grid_center = observation.get('grid_center')
-
-        default_speed = 0  # Default is to stay still
-        default_direction = np.array([0.0, 0.0], dtype=np.float32)
-        min_distance = 10.0  # Minimum distance to maintain from the center
-
-        if current_pos is None or grid_center is None:
-            # Handle missing information, return a default action (stay still)
-            return {'direction': default_direction, 'speed': 0}
-
-        current_x, current_y = current_pos
-        center_x, center_y = grid_center
-
-        # Calculate vector towards the center
-        direction_vector = np.array([center_x - current_x, center_y - current_y])
+        blue_agents = observation.get('blue_agents', {})
+        red_teammates = observation.get('red_teammates', {})
+        timestamp = observation.get('timestamp', 0.0)
         
-        # Calculate distance to center
-        distance_to_center = np.linalg.norm(direction_vector)
+        # Record positions of red teammates if within detection radius
+        for teammate_name, teammate_data in red_teammates.items():
+            if 'position' in teammate_data:
+                position = teammate_data['position']
+                # Only record if within detection radius
+                if self.is_within_detection_radius(current_pos, position):
+                    self.record_teammate_movement(teammate_name, position, timestamp)
         
-        if distance_to_center < 1e-6:  # If exactly at center (very unlikely)
-            # Choose a random direction to move away
-            random_direction = np.random.uniform(-1, 1, 2)
-            normalized_direction = (random_direction / np.linalg.norm(random_direction)).astype(np.float32)
-            speed = 5  # Move away with a moderate speed
-        elif distance_to_center < min_distance:
-            # Too close to center, reverse direction to move away
-            normalized_direction = (-direction_vector / distance_to_center).astype(np.float32)
-            # Speed proportional to how much closer than min_distance
-            speed = int(5 * (1 + (min_distance - distance_to_center) / min_distance))
-        else:
-            # Moving towards center with speed proportional to distance
-            normalized_direction = (direction_vector / distance_to_center).astype(np.float32)
-            # Cap the speed at 5 (the maximum for the action space)
-            speed = min(5, int(distance_to_center / 10))
-        
-        # The action is a dictionary containing direction and speed
-        action = {
-            'direction': normalized_direction,
-            'speed': speed
-        }
-        
-        return action
+        # Select strategy based on strategy_type
+        if self.strategy_type == "avoidant":
+            return avoidant_red_strategy(current_pos, grid_center, blue_agents, self.detection_radius)
+        elif self.strategy_type == "aggressive":
+            return aggressive_red_strategy(current_pos, grid_center, blue_agents, self.detection_radius)
+        elif self.strategy_type == "team":
+            return team_based_red_strategy(current_pos, grid_center, red_teammates, blue_agents, self.detection_radius)
+        else:  # Default to center-based
+            return center_based_movement_strategy(current_pos, grid_center)
 
+    def is_within_detection_radius(self, current_pos: Tuple[float, float], other_pos: Tuple[float, float]) -> bool:
+        """
+        Check if another agent is within the detection radius.
+        
+        Args:
+            current_pos (Tuple[float, float]): Current position of this agent
+            other_pos (Tuple[float, float]): Position of the other agent
+            
+        Returns:
+            bool: True if the other agent is within detection radius, False otherwise
+        """
+        if current_pos is None or other_pos is None:
+            return False
+        return self.calculate_distance(current_pos, other_pos) <= self.detection_radius
+    
+    def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
+        """
+        Calculate Euclidean distance between two positions.
+
+        Args:
+            pos1 (Tuple[float, float]): First position (x, y)
+            pos2 (Tuple[float, float]): Second position (x, y)
+
+        Returns:
+            float: Euclidean distance between the positions
+        """
+        return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+        
     def __str__(self):
         position_str = f", Pos: ({self.x:.2f}, {self.y:.2f})" if self.x is not None and self.y is not None else ""
         movement_str = f", Speed: {self.speed:.2f}, Dir: {self.direction}" if self.direction is not None else ""
+        strategy_str = f", Strategy: {self.strategy_type}"
         # Assuming self.agent_type and self.comms_type are set by BaseAgent.
-        return f"RedAgent(Name: {self.name}, Type: {self.agent_type.value}, Comms: {self.comms_type.value}, CommBW: {self.communication_bandwidth}, ProcCap: {self.processing_capability}{position_str}{movement_str})"
+        return f"RedAgent(Name: {self.name}, Type: {self.agent_type.value}, Comms: {self.comms_type.value}, CommBW: {self.communication_bandwidth}, ProcCap: {self.processing_capability}{position_str}{movement_str}{strategy_str})"
 
     def __repr__(self):
         position_repr = f", x={self.x}, y={self.y}" if self.x is not None and self.y is not None else ""
@@ -114,4 +151,6 @@ class RedAgent(BaseAgent):
         # RedAgent implies AgentType.RED. CommsType defaults in BaseAgent.
         return (f"RedAgent(name='{self.name}', "
                 f"communication_bandwidth={self.communication_bandwidth}, "
-                f"processing_capability={self.processing_capability}{position_repr}{movement_repr})")
+                f"processing_capability={self.processing_capability}, "
+                f"detection_radius={self.detection_radius}, "
+                f"strategy_type='{self.strategy_type}'{position_repr}{movement_repr})")

@@ -9,10 +9,12 @@ agents:
       communication_bandwidth: 15 # Max agents it can talk to per step
       processing_capability: 5   # Max past time steps it can use for prediction
       detection_radius: 20.0     # Radius within which the agent can detect Red agents
+      strategy_type: "pursuit"  # Move toward predicted positions of red agents
     - count: 2
       communication_bandwidth: 5
       processing_capability: 2
       detection_radius: 15.0     # Different detection radius for this group
+      strategy_type: "static"   # Stay stationary
 
   red_agents:
     - count: 8  # All red agents use center strategy
@@ -29,7 +31,7 @@ environment:
   save_episode_gifs: True 
   # For example: grid_size, max_steps, reward_structure, etc.
   env_param_1: "value1" # Existing example parameter
-  max_cycles: 50 # Max cycles for the simulation loop in main.py
+  max_cycles: 100 # Max cycles for the simulation loop in main.py
 
 training:
   # Training-specific parameters

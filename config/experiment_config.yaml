@@ -9,10 +9,12 @@ agents:
       communication_bandwidth: 15 # Max agents it can talk to per step
       processing_capability: 5   # Max past time steps it can use for prediction
       detection_radius: 20.0      # Radius within which the agent can detect Red agents
+      strategy_type: "pursuit"  # Move toward predicted positions of red agents
     - count: 2
       communication_bandwidth: 5
       processing_capability: 2
       detection_radius: 15.0      # Different detection radius for this group
+      strategy_type: "static"   # Stay stationary
 
   red_agents:
     - count: 2

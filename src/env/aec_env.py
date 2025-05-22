@@ -193,6 +193,17 @@ class AECGameEnv(AECEnv):
                     red_obj.x is not None and red_obj.y is not None):
                     red_teammates_info[red_name] = {'position': (red_obj.x, red_obj.y)}
             observation['red_teammates'] = red_teammates_info
+        
+        # If using flocking strategy, pass the flocking-specific parameters if they exist in env_config
+        if hasattr(agent_obj, 'strategy_type') and agent_obj.strategy_type == 'flocking':
+            # Get parameters from the environment config if available
+            # These would have been specified in the configuration file
+            agent_config = self._get_agent_config(agent)
+            if agent_config:
+                # Add flocking parameters to the observation if they exist in the config
+                for param in ['cohesion_weight', 'alignment_weight', 'separation_weight', 'separation_radius']:
+                    if param in agent_config:
+                        observation[param] = agent_config[param]
 
         return observation
 
@@ -241,7 +252,7 @@ class AECGameEnv(AECEnv):
 
         if self.terminations[agent_name] or self.truncations[agent_name]:
             # If agent is done, handle potential cleanup and select next agent
-            self._was_done_step(action) # PZ utility
+            self._was_dead_step(action) # PZ utility - using _was_dead_step (newer API name)
             return
 
         # --- Action Processing ---
@@ -346,12 +357,20 @@ class AECGameEnv(AECEnv):
         """Matplotlib rendering for visualization."""
         # This function will now handle both displaying and/or saving frames for a GIF.
         import matplotlib.pyplot as plt
-
+        
         fig, ax = plt.subplots(figsize=self.gif_figsize)
         ax.set_xlim(0, self.grid_width)
         ax.set_ylim(0, self.grid_height)
         ax.set_aspect('equal', adjustable='box')
-
+        
+        # Draw a ring around the center of the grid to indicate the position of attractors
+        center_x, center_y = self.grid_width / 2, self.grid_height / 2  # Center at (50, 50) for 100x80 grid
+        attractor_radius = 10.0  # Radius of the attractor ring
+        attractor_circle = plt.Circle((center_x, center_y), attractor_radius, fill=False, color='orange', linestyle='--', linewidth=2)
+        ax.add_patch(attractor_circle)
+        # Add a small text label explaining the circle
+        ax.text(center_x, center_y - attractor_radius - 2, 'Attractor Zone', color='orange', ha='center', fontsize=8)
+        
         something_plotted = False
         for name, agent_obj in self.agent_objects.items():
             is_done = self.terminations.get(name, True) or self.truncations.get(name, True)
@@ -417,8 +436,14 @@ class AECGameEnv(AECEnv):
                                                        'g--', alpha=0.7)
 
         ax.set_title(f"Episode: {self.current_episode_number}, Step: {self.steps}, Agent: {self.agent_selection}")
+        
+        # Only create a legend if there are labeled artists
+        # This prevents 'No artists with labels found to put in legend' warnings
         if something_plotted:
-            ax.legend(loc='upper right', fontsize='small')
+            # Check if there are any labeled artists before creating legend
+            handles, labels = ax.get_legend_handles_labels()
+            if handles and labels:
+                ax.legend(loc='upper right', fontsize='small')
 
         if self.save_episode_gifs:
             try:
@@ -457,6 +482,45 @@ class AECGameEnv(AECEnv):
             # print(f"[GIF ERROR] Error saving GIF {gif_filename}: {e}")
             traceback.print_exc()
 
+    def _get_agent_config(self, agent_name):
+        """
+        Get the configuration for a specific agent from the environment config.
+        
+        Args:
+            agent_name (str): The name of the agent (e.g., 'red_0', 'blue_1')
+            
+        Returns:
+            dict or None: The configuration dictionary for the agent if found, None otherwise
+        """
+        agent_type = None
+        agent_index = None
+        
+        # Parse agent name to get type and index
+        if '_' in agent_name:
+            parts = agent_name.split('_')
+            agent_type = parts[0]  # 'red' or 'blue'
+            try:
+                agent_index = int(parts[1])  # The numeric part (0, 1, 2, ...)
+            except ValueError:
+                return None
+        
+        if not agent_type or agent_index is None:
+            return None
+            
+        # Look up in environment config
+        agent_configs = self.env_config.get('agents', {}).get(f"{agent_type}_agents", [])
+        
+        # Find which agent group this agent belongs to
+        current_count = 0
+        for group_config in agent_configs:
+            group_count = group_config.get('count', 0)
+            if agent_index < current_count + group_count:
+                # This agent belongs to this group
+                return group_config
+            current_count += group_count
+            
+        return None
+    
     def close(self):
         """
         Close the environment, release resources.

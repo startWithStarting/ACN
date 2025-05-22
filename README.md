@@ -6,10 +6,16 @@ This project focuses on multi-agent systems with onboard sensing and actuation c
 ## Current Features
 
 ### Agent Types
-- **Blue Agents**: Defensive agents equipped with Vector Auto-Regressive (VAR) models to predict future positions of red agents. They move toward the average predicted position of detected red agents.
+- **Blue Agents**: Defensive agents equipped with Vector Auto-Regressive (VAR) models to predict future positions of red agents. Their behavior can be configured using different strategies.
 - **Red Agents**: Mobile agents with various movement strategies. Their behavior can be configured using different strategies.
 
-### Red Agent Strategies
+### Agent Strategies
+
+#### Blue Agent Strategies
+1. **Static**: Agents remain stationary but still track and predict red agent movements.
+2. **Pursuit**: Agents move toward the average predicted position of detected red agents.
+
+#### Red Agent Strategies
 1. **Center-based**: Agents move toward or away from the grid center, maintaining a minimum distance.
 2. **Avoidant**: Agents detect blue agents and steer away from them.
 3. **Aggressive**: Agents detect and pursue blue agents, prioritizing the closest ones.

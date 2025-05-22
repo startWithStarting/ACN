@@ -6,11 +6,16 @@ from sklearn.linear_model import LinearRegression
 from .base_agent import BaseAgent, AgentType
 from ..utils.regressor import VectorAutoRegressor
 
+# Import blue agent strategies
+from .blue_strategies.static_strategy import static_blue_strategy
+from .blue_strategies.pursuit_strategy import pursuit_blue_strategy
+
 class BlueAgent(BaseAgent):
     """
     Represents a Blue agent in the simulation.
     """
-    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, detection_radius: float = 20.0):
+    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, 
+                 detection_radius: float = 20.0, strategy_type: str = "pursuit"):
         """
         Initializes a Blue agent.
 
@@ -19,6 +24,9 @@ class BlueAgent(BaseAgent):
             communication_bandwidth (int): Communication capacity.
             processing_capability (int): Computational power - also determines number of past time steps for prediction.
             detection_radius (float): Radius within which the agent can detect Red agents. Defaults to 20.0.
+            strategy_type (str): Movement strategy to use. Options are:
+                                  "static" - Remain stationary
+                                  "pursuit" - Move toward predicted red agent positions
         """
         super().__init__(
             name=name,
@@ -44,6 +52,9 @@ class BlueAgent(BaseAgent):
         self.actual_position_history = defaultdict(list)
         # Key: Red agent name, Value: List of (predicted_position, timestamp) tuples
         self.prediction_history = defaultdict(list)
+        
+        # Set the movement strategy type
+        self.strategy_type = strategy_type
 
     def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
         """
@@ -237,39 +248,18 @@ class BlueAgent(BaseAgent):
                         if future_positions:
                             self.predicted_positions[red_name] = future_positions
 
-        # Calculate average predicted position of detected red agents
+        # Collect detected predictions for red agents
         detected_predictions = []
         for red_name, predictions in self.predicted_positions.items():
             if predictions and self.is_within_detection_radius(self.observed_red_agents[red_name][-1][0]):
                 detected_predictions.extend(predictions)
         
-        # If no predictions are available, stay still
-        if not detected_predictions:
-            return {
-                'direction': np.array([0.0, 0.0], dtype=np.float32),
-                'speed': 0
-            }
-        
-        # Calculate average predicted position
-        avg_predicted_pos = np.mean(detected_predictions, axis=0)
-        
-        # Calculate direction vector from current position to average predicted position
-        current_pos = np.array([self.x, self.y], dtype=np.float32)
-        direction_vector = avg_predicted_pos - current_pos
-        
-        # Normalize the direction vector if it's not zero
-        distance = np.linalg.norm(direction_vector)
-        if distance > 0:
-            direction_vector = direction_vector / distance
-        
-        # Set speed proportional to the distance
-        max_speed = 5.0  # Maximum speed limit
-        speed = min(distance * 0.5, max_speed)  # Scale factor 0.5 can be adjusted
-        
-        return {
-            'direction': np.array(direction_vector, dtype=np.float32),
-            'speed': float(speed)
-        }
+        # Select strategy based on strategy_type
+        if self.strategy_type == "static":
+            return static_blue_strategy()
+        else:  # Default to pursuit strategy
+            current_pos = np.array([self.x, self.y], dtype=np.float32)
+            return pursuit_blue_strategy(current_pos, detected_predictions)
 
     # You can override methods from BaseAgent if Blue agents behave differently
     # For example:

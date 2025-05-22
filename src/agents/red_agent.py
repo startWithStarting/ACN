@@ -9,6 +9,7 @@ from .strategies.red_agent_strategy import center_based_movement_strategy
 from .strategies.avoidant_red_strategy import avoidant_red_strategy
 from .strategies.aggressive_red_strategy import aggressive_red_strategy
 from .strategies.team_based_red_strategy import team_based_red_strategy
+from .strategies.flocking_red_strategy import flocking_red_strategy
 
 class RedAgent(BaseAgent):
     """
@@ -107,6 +108,28 @@ class RedAgent(BaseAgent):
             return aggressive_red_strategy(current_pos, grid_center, blue_agents, self.detection_radius)
         elif self.strategy_type == "team":
             return team_based_red_strategy(current_pos, grid_center, red_teammates, blue_agents, self.detection_radius)
+        elif self.strategy_type == "flocking":
+            # For flocking, we need to extract the previous positions of teammates for alignment behavior
+            for teammate_name, teammates_list in self.observed_teammates.items():
+                if teammate_name in red_teammates and len(teammates_list) > 0:
+                    # Add previous positions to the teammate data for alignment calculation
+                    previous_positions = [pos for pos, _ in teammates_list]
+                    red_teammates[teammate_name]['previous_positions'] = previous_positions
+            
+            # Get flocking-specific parameters from config if available
+            cohesion_weight = observation.get('cohesion_weight', 0.33)
+            alignment_weight = observation.get('alignment_weight', 0.33)
+            separation_weight = observation.get('separation_weight', 0.33)
+            separation_radius = observation.get('separation_radius', 5.0)
+            
+            # Get the current timestamp for initial time step behavior
+            timestamp = observation.get('timestamp', 0.0)
+            
+            return flocking_red_strategy(
+                current_pos, grid_center, red_teammates, blue_agents, 
+                self.detection_radius, cohesion_weight, alignment_weight, 
+                separation_weight, separation_radius, timestamp
+            )
         else:  # Default to center-based
             return center_based_movement_strategy(current_pos, grid_center)
 

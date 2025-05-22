@@ -190,9 +190,11 @@ def main(config_path):
         communication_bandwidth = spec.get("communication_bandwidth", 0)
         processing_capability = spec.get("processing_capability", 0)
         detection_radius = spec.get("detection_radius", 20.0)
+        strategy_type = spec.get("strategy_type", "pursuit")
         for _ in range(count):
             agent_name = f"blue_{agent_id_counter}"
-            all_agents.append(BlueAgent(agent_name, communication_bandwidth, processing_capability, detection_radius))
+            all_agents.append(BlueAgent(agent_name, communication_bandwidth, processing_capability, 
+                                     detection_radius, strategy_type))
             agent_id_counter += 1
 
     for spec in red_agents_specs:

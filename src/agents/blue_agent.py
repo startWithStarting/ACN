@@ -55,6 +55,14 @@ class BlueAgent(BaseAgent):
         
         # Set the movement strategy type
         self.strategy_type = strategy_type
+        
+        # Optimization: Prediction interval
+        self.prediction_interval = 5
+        self.steps = 0
+        
+        # Movement memory/momentum system
+        self.memory_constant = 0.1  # How much to retain from previous path (0-1)
+        self.current_target_position = None  # Current target the agent is moving toward
 
     def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
         """
@@ -219,34 +227,58 @@ class BlueAgent(BaseAgent):
                         self.actual_position_history[red_name].append((position, timestamp))
                         # print(f"DEBUG: {self.name} detected {red_name} at position {position} at time {timestamp}")
             
-            # Clear previous predictions
-            self.predicted_positions.clear()
-            
             # Try to fit/update prediction models for all observed red agents
+        # Optimization: Only update predictions every prediction_interval steps
+        self.steps += 1
+        if self.steps % self.prediction_interval == 0:
+            # Calculate new predicted target position
+            new_predictions = {}
+            
             for red_name in self.observed_red_agents.keys():
                 # Only try to fit the model if we have at least 2 observations
+                model_fitted = False
                 if len(self.observed_red_agents[red_name]) >= 2:
                     # Fit or update the prediction model
                     model_fitted = self.fit_prediction_model(red_name)
-                    
-                    # If model was successfully fitted, make predictions for future positions
-                    if model_fitted or red_name in self.prediction_models:
-                        # Make prediction for the next step (steps_ahead=1)
-                        next_step_prediction = self.predict_future_position(red_name, 1, current_time=timestamp)
-                        if next_step_prediction is not None and not (next_step_prediction[0] == 0 and next_step_prediction[1] == 0):
-                            self.prediction_history[red_name].append((next_step_prediction, timestamp))
-                            # print(f"DEBUG: {self.name} predicted {red_name} will be at {next_step_prediction} at time {timestamp}")
-                            
-                        # Store predictions for the next 5 steps (for visualization)
-                        future_positions = []
-                        for steps_ahead in range(1, 6):
-                            future_pos = self.predict_future_position(red_name, steps_ahead, current_time=timestamp)
-                            if future_pos is not None:
-                                future_positions.append(future_pos)
+                
+                # If model was successfully fitted, make predictions for future positions
+                if model_fitted or red_name in self.prediction_models:
+                    # Make prediction for the next step (steps_ahead=1)
+                    next_step_prediction = self.predict_future_position(red_name, 1, current_time=timestamp)
+                    if next_step_prediction is not None and not (next_step_prediction[0] == 0 and next_step_prediction[1] == 0):
+                        self.prediction_history[red_name].append((next_step_prediction, timestamp))
                         
-                        # Store the predictions if we have any
-                        if future_positions:
-                            self.predicted_positions[red_name] = future_positions
+                    # Store predictions for the next 5 steps (for visualization)
+                    future_positions = []
+                    for steps_ahead in range(1, 6):
+                        future_pos = self.predict_future_position(red_name, steps_ahead, current_time=timestamp)
+                        if future_pos is not None:
+                            future_positions.append(future_pos)
+                    
+                    # Store the new predictions
+                    if future_positions:
+                        new_predictions[red_name] = future_positions
+            
+            # Update predicted_positions with new predictions
+            self.predicted_positions = new_predictions
+            
+            # Calculate new target position from predictions
+            if self.predicted_positions:
+                all_predictions = []
+                for predictions in self.predicted_positions.values():
+                    all_predictions.extend(predictions)
+                new_target = np.mean(all_predictions, axis=0)
+                
+                # Blend with current target using memory constant
+                # new_target = current_target * memory + new_observation * (1 - memory)
+                if self.current_target_position is not None:
+                    self.current_target_position = (
+                        self.current_target_position * self.memory_constant +
+                        new_target * (1 - self.memory_constant)
+                    )
+                else:
+                    # First time, just use the new target
+                    self.current_target_position = new_target
 
         # Collect detected predictions for red agents
         detected_predictions = []
@@ -259,7 +291,9 @@ class BlueAgent(BaseAgent):
             return static_blue_strategy()
         else:  # Default to pursuit strategy
             current_pos = np.array([self.x, self.y], dtype=np.float32)
-            return pursuit_blue_strategy(current_pos, detected_predictions)
+            # Use momentum-based target position for smooth movement
+            target_pos = self.current_target_position if self.current_target_position is not None else None
+            return pursuit_blue_strategy(current_pos, target_pos)
 
     # You can override methods from BaseAgent if Blue agents behave differently
     # For example:

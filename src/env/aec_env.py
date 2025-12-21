@@ -5,6 +5,8 @@ import io
 # Ensure imageio is installed: pip install imageio
 import imageio.v2 as imageio # Using v2 for modern API
 
+import pygame
+
 import gymnasium
 import numpy as np
 from gymnasium.spaces import Discrete, Box, Dict as GymDict # Import Dict space
@@ -36,10 +38,10 @@ class AECGameEnv(AECEnv):
     - Termination/Truncation: After a fixed number of steps per agent.
     """
     metadata = {
-        "render_modes": ["human", "human_matplotlib", "human_matplotlib_pred"],
+        "render_modes": ["human", "human_matplotlib", "human_matplotlib_pred", "human_pygame"],
         "name": "communicating_agents_v0",
         "is_parallelizable": False, # Usually True if step() doesn't depend on agent order
-        "render_fps": 40,
+        "render_fps": 120,
     }
 
     def __init__(self, agents: list[BaseAgent], render_mode=None, **env_config):
@@ -66,6 +68,7 @@ class AECGameEnv(AECEnv):
         self.gif_figsize = self.env_config.get("gif_figsize", (10, 8)) # (width, height) in inches
         self.episode_gif_frames = []
         self.current_episode_number = 0 # To number GIF filenames
+        self.should_quit = False # Flag to signal simulation should stop
 
         if self.save_episode_gifs:
             # The specific directory for this experiment's run, passed from main.py
@@ -92,8 +95,24 @@ class AECGameEnv(AECEnv):
 
         # Store agent objects and create mapping from name to object
         self.agent_objects = {agent.name: agent for agent in agents}
-        self.possible_agents = [agent.name for agent in agents] # List of agent names
+        self.possible_agents = [agent.name for agent in agents]  # All possible agent names
         self.agent_name_mapping = {i: name for i, name in enumerate(self.possible_agents)}
+        
+        # Separate agent lists for more efficient lookups
+        self.red_agents = []
+        self.blue_agents = []
+        self.active_red_agents = []
+        self.active_blue_agents = []
+        
+        for agent in agents:
+            if hasattr(agent, 'agent_type'):
+                agent_type = getattr(agent.agent_type, 'value', None)
+                if agent_type == 'red':
+                    self.red_agents.append(agent)
+                    self.active_red_agents.append(agent)
+                elif agent_type == 'blue':
+                    self.blue_agents.append(agent)
+                    self.active_blue_agents.append(agent)
 
         # PettingZoo API requirements
         self.agents = self.possible_agents[:] # Current list of active agents (names)
@@ -123,6 +142,8 @@ class AECGameEnv(AECEnv):
         }
 
         self.render_mode = render_mode
+        self.screen = None
+        self.clock = None
 
         # Internal state
         self.steps = 0
@@ -143,6 +164,24 @@ class AECGameEnv(AECEnv):
     def action_space(self, agent):
         return self._action_spaces[agent]
     
+
+    def _update_active_agents(self):
+        """Update the lists of active red and blue agents."""
+        self.active_red_agents = [
+            agent for agent in self.red_agents 
+            if (hasattr(agent, 'is_active') and agent.is_active and 
+                agent.name in self.agents and 
+                not self.terminations.get(agent.name, False) and 
+                not self.truncations.get(agent.name, False))
+        ]
+        
+        self.active_blue_agents = [
+            agent for agent in self.blue_agents 
+            if (hasattr(agent, 'is_active') and agent.is_active and 
+                agent.name in self.agents and 
+                not self.terminations.get(agent.name, False) and 
+                not self.truncations.get(agent.name, False))
+        ]
 
     def observe(self, agent):
         """
@@ -166,32 +205,31 @@ class AECGameEnv(AECEnv):
         
         # If agent is a BlueAgent, add red_agents info
         if hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'blue':
-            # Gather red agent positions
+            # Gather active red agent positions
             red_agents_info = {}
-            for red_name, red_obj in self.agent_objects.items():
-                if hasattr(red_obj, 'agent_type') and getattr(red_obj.agent_type, 'value', None) == 'red':
-                    if hasattr(red_obj, 'x') and hasattr(red_obj, 'y') and red_obj.x is not None and red_obj.y is not None:
-                        red_agents_info[red_name] = {'position': (red_obj.x, red_obj.y)}
+            for red_agent in self.active_red_agents:
+                if (hasattr(red_agent, 'x') and hasattr(red_agent, 'y') and 
+                    red_agent.x is not None and red_agent.y is not None):
+                    red_agents_info[red_agent.name] = {'position': (red_agent.x, red_agent.y)}
             observation['red_agents'] = red_agents_info
         
         # If agent is a RedAgent, add blue_agents info and red_teammates info
         elif hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'red':
-            # Gather blue agent positions
+            # Gather active blue agent positions
             blue_agents_info = {}
-            for blue_name, blue_obj in self.agent_objects.items():
-                if hasattr(blue_obj, 'agent_type') and getattr(blue_obj.agent_type, 'value', None) == 'blue':
-                    if hasattr(blue_obj, 'x') and hasattr(blue_obj, 'y') and blue_obj.x is not None and blue_obj.y is not None:
-                        blue_agents_info[blue_name] = {'position': (blue_obj.x, blue_obj.y)}
+            for blue_agent in self.active_blue_agents:
+                if (hasattr(blue_agent, 'x') and hasattr(blue_agent, 'y') and 
+                    blue_agent.x is not None and blue_agent.y is not None):
+                    blue_agents_info[blue_agent.name] = {'position': (blue_agent.x, blue_agent.y)}
             observation['blue_agents'] = blue_agents_info
             
-            # Gather red teammate positions (excluding self)
+            # Gather active red teammate positions (excluding self)
             red_teammates_info = {}
-            for red_name, red_obj in self.agent_objects.items():
-                if (red_name != agent and  # not self
-                    hasattr(red_obj, 'agent_type') and getattr(red_obj.agent_type, 'value', None) == 'red' and
-                    hasattr(red_obj, 'x') and hasattr(red_obj, 'y') and
-                    red_obj.x is not None and red_obj.y is not None):
-                    red_teammates_info[red_name] = {'position': (red_obj.x, red_obj.y)}
+            for red_agent in self.active_red_agents:
+                if (red_agent.name != agent and  # not self
+                    hasattr(red_agent, 'x') and hasattr(red_agent, 'y') and
+                    red_agent.x is not None and red_agent.y is not None):
+                    red_teammates_info[red_agent.name] = {'position': (red_agent.x, red_agent.y)}
             observation['red_teammates'] = red_teammates_info
         
         # If using flocking strategy, pass the flocking-specific parameters if they exist in env_config
@@ -222,8 +260,31 @@ class AECGameEnv(AECEnv):
         # Save GIF of the completed episode (if any frames were collected)
         if self.save_episode_gifs and self.episode_gif_frames:
             self._save_current_episode_gif()
+            
+            # Save score plot if we have score data
+            if hasattr(self, 'red_team_scores') and len(self.red_team_scores) > 0:
+                import matplotlib.pyplot as plt
+                plt.figure(figsize=(10, 4))
+                plt.plot(self.step_counts, self.red_team_scores, 'r-', label='Red Team')
+                plt.plot(self.step_counts, self.blue_team_scores, 'b-', label='Blue Team')
+                plt.xlabel('Time Step')
+                plt.ylabel('Average Score')
+                plt.title('Team Scores Over Time')
+                plt.legend()
+                plt.grid(True)
+                plt.tight_layout()
+                
+                # Save the score plot
+                plot_path = os.path.join(os.path.dirname(self.episode_gif_path), 'scores.png')
+                plt.savefig(plot_path, dpi=100, bbox_inches='tight')
+                plt.close()
 
+        # Reset episode tracking
         self.episode_gif_frames = [] # Clear frames for the new episode
+        self.red_team_scores = []
+        self.blue_team_scores = []
+        self.step_counts = []
+            
         self._agent_selector.reinit(self.agents) # Reinitialize selector
         self.agent_selection = self._agent_selector.reset() # Get first agent
 
@@ -234,14 +295,23 @@ class AECGameEnv(AECEnv):
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
         self.steps = 0
-        self.current_episode_number +=1 # Increment for the new episode
+        self.current_episode_number += 1 # Increment for the new episode
+        self._red_agent_scored_this_step = False  # Reset scoring tracker
 
-        # Reset agent object states if necessary
+        # Reset agent object states
         for agent_obj in self.agent_objects.values():
-            agent_obj.is_active = True # Example reset
+            agent_obj.is_active = True
             # Re-initialize positions on reset
             agent_obj.x = random.uniform(0, self.grid_width)
             agent_obj.y = random.uniform(0, self.grid_height)
+            
+        # Reset active agent lists
+        self._update_active_agents()
+        
+        return {agent: self.observe(agent) for agent in self.agents}
+        
+        # Reset active agent lists
+        self._update_active_agents()
 
     def step(self, action):
         """
@@ -249,6 +319,27 @@ class AECGameEnv(AECEnv):
         Updates rewards, terminations, truncations, and selects the next agent.
         """
         agent_name = self.agent_selection
+
+        # Update active agents before processing the step
+        self._update_active_agents()
+        
+        # Track if any red agent scores this step
+        self._red_agent_scored_this_step = False
+        
+        # Track scores at the beginning of each full cycle (when we're back to the first agent)
+        if agent_name == self.agents[0]:
+            # Calculate average scores for each team
+            red_scores = [self._cumulative_rewards[name] for name, agent in self.agent_objects.items() 
+                         if hasattr(agent, 'agent_type') and getattr(agent.agent_type, 'value', None) == 'red']
+            blue_scores = [self._cumulative_rewards[name] for name, agent in self.agent_objects.items() 
+                          if hasattr(agent, 'agent_type') and getattr(agent.agent_type, 'value', None) == 'blue']
+            
+            avg_red = sum(red_scores) / len(red_scores) if red_scores else 0
+            avg_blue = sum(blue_scores) / len(blue_scores) if blue_scores else 0
+            
+            self.red_team_scores.append(avg_red)
+            self.blue_team_scores.append(avg_blue)
+            self.step_counts.append(self.steps)
 
         if self.terminations[agent_name] or self.truncations[agent_name]:
             # If agent is done, handle potential cleanup and select next agent
@@ -283,8 +374,23 @@ class AECGameEnv(AECEnv):
                 current_agent_obj.direction = tuple(direction)
                 current_agent_obj.speed = float(speed)  # Convert to float for consistency
                 
-                # Simple reward for now (can be customized based on game mechanics)
+                # Calculate distance to center
+                center = (self.grid_width / 2, self.grid_height / 2)
+                distance_to_center = np.sqrt((current_agent_obj.x - center[0])**2 + 
+                                           (current_agent_obj.y - center[1])**2)
+                
+                # Initialize reward
                 reward = 0
+                
+                # Check if agent is a red agent
+                if hasattr(current_agent_obj, 'agent_type') and getattr(current_agent_obj.agent_type, 'value', None) == 'red':
+                    # Check if within 1 unit of the attractor circle (radius 50)
+                    if abs(distance_to_center - 50) <= 1.0:
+                        # Check if not detected by any blue agent
+                        if not self._is_red_agent_detected(current_agent_obj):
+                            reward = 1  # Give reward for being in the right place undetected
+                            self.rewards[agent_name] = 1
+                            self._red_agent_scored_this_step = True
             else:
                 # Invalid action format for agent
                 reward = -1  # Penalty for invalid action
@@ -314,9 +420,22 @@ class AECGameEnv(AECEnv):
         
         # Select the next agent using PettingZoo's agent selector
         self.agent_selection = self._agent_selector.next()
+        
+        # Skip over any terminated/truncated agents
+        while (self.terminations.get(self.agent_selection, False) or 
+               self.truncations.get(self.agent_selection, False)) and \
+              len(self.agents) > 0:
+            self.agent_selection = self._agent_selector.next()
+            
+        # If we've gone through all agents for this step and no red agent scored,
+        # give a small reward to all active blue agents
+        if self.agent_selection == self.agents[0] and not self._red_agent_scored_this_step:
+            for blue_agent in self.active_blue_agents:
+                if blue_agent.name in self.rewards:
+                    self.rewards[blue_agent.name] += 0.1  # Small reward for preventing red agents from scoring
 
         # Call render if a human-viewable mode is active
-        if self.render_mode in ["human", "human_matplotlib", "human_matplotlib_pred"]:
+        if self.render_mode in ["human", "human_matplotlib", "human_matplotlib_pred", "human_pygame"]:
             self.render()
 
     def render(self):
@@ -336,8 +455,129 @@ class AECGameEnv(AECEnv):
             return self._render_matplotlib()
         elif self.render_mode == "human_matplotlib_pred":
             return self._render_matplotlib(show_predictions=True)
+        elif self.render_mode == "human_pygame":
+            return self._render_pygame()
         else:
             raise NotImplementedError(f"Render mode '{self.render_mode}' not supported.")
+
+    def _render_pygame(self):
+        """
+        Renders the environment using PyGame.
+        """
+        if self.screen is None:
+            pygame.init()
+            pygame.display.init()
+            # Scale up the window for better visibility
+            self.window_scale = 8 
+            self.window_width = int(self.grid_width * self.window_scale)
+            self.window_height = int(self.grid_height * self.window_scale)
+            self.screen = pygame.display.set_mode((self.window_width, self.window_height))
+            pygame.display.set_caption("ACN Simulation")
+            self.clock = pygame.time.Clock()
+
+        if self.clock is None:
+            self.clock = pygame.time.Clock()
+
+        self.screen.fill((255, 255, 255)) # White background
+
+        # Draw attractor zone
+        center_x = int((self.grid_width / 2) * self.window_scale)
+        center_y = int((self.grid_height / 2) * self.window_scale)
+        # In PyGame y is down, but our grid might be bottom-up. 
+        # Usually standard is top-left (0,0). Let's assume standard PyGame coords match our grid logic 
+        # (0,0 at top-left) or we might need to flip Y.
+        # For now, assuming direct mapping is fine.
+        
+        attractor_radius = int(10.0 * self.window_scale)
+        pygame.draw.circle(self.screen, (255, 165, 0), (center_x, center_y), attractor_radius, 2) # Orange outline
+
+        # Draw agents
+        for name, agent_obj in self.agent_objects.items():
+            is_done = self.terminations.get(name, True) or self.truncations.get(name, True)
+            if not is_done and hasattr(agent_obj, 'x') and hasattr(agent_obj, 'y') \
+               and agent_obj.x is not None and agent_obj.y is not None:
+                
+                x = int(agent_obj.x * self.window_scale)
+                y = int(agent_obj.y * self.window_scale)
+                
+                color = (128, 128, 128) # Grey
+                if hasattr(agent_obj, 'agent_type') and hasattr(agent_obj.agent_type, 'value'):
+                    if agent_obj.agent_type.value == 'blue':
+                        color = (0, 0, 255) # Blue
+                    elif agent_obj.agent_type.value == 'red':
+                        color = (255, 0, 0) # Red
+                
+                pygame.draw.circle(self.screen, color, (x, y), 5)
+                
+                # Draw predictions for Blue agents
+                if agent_obj.agent_type.value == 'blue' and hasattr(agent_obj, 'predicted_positions'):
+                     for red_name, predictions in agent_obj.predicted_positions.items():
+                        for i, pred_pos in enumerate(predictions):
+                            px = int(pred_pos[0] * self.window_scale)
+                            py = int(pred_pos[1] * self.window_scale)
+                            
+                            # Clamp coordinates to prevent PyGame overflow/crash with huge numbers
+                            # PyGame uses C ints, so keep it within safe 16-bit range or reasonable screen bounds
+                            max_coord = 30000
+                            px = max(-max_coord, min(max_coord, px))
+                            py = max(-max_coord, min(max_coord, py))
+
+                            # Fade to green
+                            alpha = max(50, 255 - i * 40)
+                            # PyGame doesn't support alpha on direct draw calls easily without a surface
+                            # So we just use a lighter green
+                            pred_color = (0, 255, 0)
+                            try:
+                                pygame.draw.circle(self.screen, pred_color, (px, py), 3)
+                            except TypeError as e:
+                                print(f"[RENDER ERROR] Failed to draw prediction at ({px}, {py}) type: {type(px)}, {type(py)}. Error: {e}")
+
+        # Update display
+        pygame.display.flip()
+        self.clock.tick(self.metadata["render_fps"])
+        
+        # Capture frame for GIF
+        if self.save_episode_gifs:
+            # pygame.surfarray.array3d returns (width, height, 3)
+            # imageio expects (height, width, 3)
+            frame = np.transpose(pygame.surfarray.array3d(self.screen), (1, 0, 2))
+            self.episode_gif_frames.append(frame)
+        
+        # Handle events to prevent freezing
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.should_quit = True
+                pygame.quit()
+                self.screen = None
+
+    def _is_red_agent_detected(self, red_agent):
+        """Check if a red agent is detected by any active blue agent.
+        
+        Args:
+            red_agent: The red agent object to check
+            
+        Returns:
+            bool: True if detected by any blue agent, False otherwise
+        """
+        if not hasattr(red_agent, 'x') or not hasattr(red_agent, 'y') or red_agent.x is None or red_agent.y is None:
+            return False
+            
+        red_pos = (red_agent.x, red_agent.y)
+        
+        # Only iterate through active blue agents
+        for blue_agent in self.active_blue_agents:
+            # Skip if blue agent is terminated
+            if (not hasattr(blue_agent, 'is_active') or not blue_agent.is_active or
+                not hasattr(blue_agent, 'is_within_detection_radius') or 
+                not hasattr(blue_agent, 'x') or not hasattr(blue_agent, 'y') or 
+                blue_agent.x is None or blue_agent.y is None):
+                continue
+                
+            # Call is_within_detection_radius with just the red agent's position
+            # The blue agent already knows its own position
+            if blue_agent.is_within_detection_radius(red_pos):
+                return True
+        return False
 
     def _render_text(self):
         """Text-based rendering for debugging."""
@@ -355,13 +595,46 @@ class AECGameEnv(AECEnv):
 
     def _render_matplotlib(self, show_predictions=False):
         """Matplotlib rendering for visualization."""
-        # This function will now handle both displaying and/or saving frames for a GIF.
         import matplotlib.pyplot as plt
         
-        fig, ax = plt.subplots(figsize=self.gif_figsize)
-        ax.set_xlim(0, self.grid_width)
-        ax.set_ylim(0, self.grid_height)
-        ax.set_aspect('equal', adjustable='box')
+        # Initialize figure if it doesn't exist
+        if not hasattr(self, 'fig') or self.fig is None:
+            # Create a figure with two subplots: one for the environment and one for scores
+            self.fig = plt.figure(figsize=(self.gif_figsize[0], self.gif_figsize[1] + 2))
+            gs = self.fig.add_gridspec(2, 1, height_ratios=[3, 1])
+            self.ax_env = self.fig.add_subplot(gs[0])
+            self.ax_score = self.fig.add_subplot(gs[1])
+            plt.ion() # Turn on interactive mode
+            self.fig.show()
+        
+        # Clear axes for new frame
+        self.ax_env.clear()
+        self.ax_score.clear()
+        
+        # Set up environment plot
+        self.ax_env.set_xlim(0, self.grid_width)
+        self.ax_env.set_ylim(0, self.grid_height)
+        self.ax_env.set_aspect('equal', adjustable='box')
+        
+        # Plot score history if we have data
+        if len(self.step_counts) > 0:
+            self.ax_score.plot(self.step_counts, self.red_team_scores, 'r-', label='Red Team')
+            self.ax_score.plot(self.step_counts, self.blue_team_scores, 'b-', label='Blue Team')
+            self.ax_score.set_xlabel('Time Step')
+            self.ax_score.set_ylabel('Avg Score')
+            self.ax_score.legend()
+            self.ax_score.grid(True)
+            
+            # Add current scores as text
+            current_red = self.red_team_scores[-1] if self.red_team_scores else 0
+            current_blue = self.blue_team_scores[-1] if self.blue_team_scores else 0
+            score_text = f'Red: {current_red:.2f}  |  Blue: {current_blue:.2f}'
+            self.ax_score.set_title(f'Team Scores (Current: {score_text})')
+            
+        self.fig.tight_layout()
+        
+        # The rest of the environment plotting will use ax_env
+        ax = self.ax_env  # For backward compatibility with existing code
         
         # Draw a ring around the center of the grid to indicate the position of attractors
         center_x, center_y = self.grid_width / 2, self.grid_height / 2  # Center at (50, 50) for 100x80 grid
@@ -445,10 +718,14 @@ class AECGameEnv(AECEnv):
             if handles and labels:
                 ax.legend(loc='upper right', fontsize='small')
 
+        # Update the display
+        plt.draw()
+        plt.pause(0.001)
+
         if self.save_episode_gifs:
             try:
                 buf = io.BytesIO()
-                fig.savefig(buf, format='png')
+                self.fig.savefig(buf, format='png')
                 buf.seek(0)
                 frame = imageio.imread(buf)
                 self.episode_gif_frames.append(frame)
@@ -458,12 +735,6 @@ class AECGameEnv(AECEnv):
                 import traceback
                 # print(f"[GIF ERROR] Error capturing frame for GIF: {e}")
                 traceback.print_exc()
-            finally:
-                plt.close(fig) # Close the figure to free memory
-        else:
-            # Original behavior if not saving GIFs: pause and then close the figure
-            plt.pause(0.01) # Reduced pause time for faster human rendering
-            plt.close(fig) # Close the figure
 
     def _save_current_episode_gif(self):
         """Saves the collected frames as a GIF for the current episode."""
@@ -529,3 +800,7 @@ class AECGameEnv(AECEnv):
         if self.save_episode_gifs and self.episode_gif_frames:
             self._save_current_episode_gif()
             self.episode_gif_frames = [] # Clear frames
+            
+        if self.screen is not None:
+            pygame.quit()
+            self.screen = None

@@ -1,5 +1,9 @@
 import argparse
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 import yaml # Or json, if preferred later
 from datetime import datetime
 import numpy as np
@@ -231,7 +235,12 @@ def main(config_path):
     
     # Use PettingZoo's agent selector for proper agent cycling
     print("Starting simulation cycles...")
+    import time
+    start_time = time.time()
+    total_steps = 0
+    
     for cycle in range(max_cycles):
+        cycle_start = time.time()
         print(f"Cycle {cycle+1}/{max_cycles}")
         # Loop until all agents have taken their turn in this cycle
         agents_in_cycle = set(env.agents)
@@ -275,6 +284,28 @@ def main(config_path):
         if all(env.terminations.values()) or all(env.truncations.values()):
             print("All agents are done. Breaking out of simulation loop.")
             break
+            
+        # Check if user closed the pygame window
+        if hasattr(env, 'should_quit') and env.should_quit:
+            print("PyGame window closed. Stopping simulation.")
+            break
+            
+        cycle_end = time.time()
+        print(f"Cycle {cycle+1} took {cycle_end - cycle_start:.4f}s")
+        
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"Total simulation time: {duration:.2f}s")
+    # Approximate steps (cycles * agents)
+    total_steps = max_cycles * len(all_agents) 
+    print(f"Average FPS: {total_steps / duration:.2f}")
+    
+    with open("timing_stats.txt", "w") as f:
+        f.write(f"Duration: {duration:.4f}\n")
+        f.write(f"Total Steps: {total_steps}\n")
+        f.write(f"FPS: {total_steps / duration:.4f}\n")
+        f.write(f"Cycles: {max_cycles}\n")
+        f.write(f"Agents: {len(all_agents)}\n")
 
     # Before closing the environment, extract the BlueAgent objects for plotting
     blue_agents = [agent for agent in all_agents if hasattr(agent, 'agent_type') and agent.agent_type.value == 'blue']
@@ -296,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="config/experiment_config.yaml",
+        default=os.getenv("ACN_CONFIG_PATH", "config/avoidant_config.yaml"),
         help="Path to the experiment configuration file (YAML or JSON)."
     )
     args = parser.parse_args()

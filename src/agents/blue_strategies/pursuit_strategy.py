@@ -2,15 +2,15 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
 def pursuit_blue_strategy(current_pos: np.ndarray, 
-                          detected_predictions: List[Tuple[float, float]],
+                          target_position: Optional[np.ndarray],
                           max_speed: float = 5.0,
                           speed_scale: float = 0.5) -> Dict[str, Any]:
     """
-    A strategy where blue agents move toward the average predicted position of detected red agents.
+    A strategy where blue agents move toward a target position (with momentum/memory).
     
     Args:
         current_pos (np.ndarray): Current position of the blue agent (x, y)
-        detected_predictions (List[Tuple[float, float]]): List of predicted positions for detected red agents
+        target_position (Optional[np.ndarray]): Target position to move toward (can be None)
         max_speed (float): Maximum speed limit
         speed_scale (float): Scale factor for speed calculation
         
@@ -18,18 +18,15 @@ def pursuit_blue_strategy(current_pos: np.ndarray,
         Dict[str, Any]: A dictionary containing the 'direction' (normalized numpy array)
                          and 'speed' (float).
     """
-    # If no predictions are available, stay still
-    if not detected_predictions:
+    # If no target position is available, stay still
+    if target_position is None:
         return {
             'direction': np.array([0.0, 0.0], dtype=np.float32),
             'speed': 0
         }
     
-    # Calculate average predicted position
-    avg_predicted_pos = np.mean(detected_predictions, axis=0)
-    
-    # Calculate direction vector from current position to average predicted position
-    direction_vector = avg_predicted_pos - current_pos
+    # Calculate direction vector from current position to target position
+    direction_vector = target_position - current_pos
     
     # Normalize the direction vector if it's not zero
     distance = np.linalg.norm(direction_vector)

@@ -1,2 +1,8 @@
 __pycache__/
 results/
+.windsurf/
+.gitignore/
+.windsurf/
+.pytest_cache
+.env
+.venv/

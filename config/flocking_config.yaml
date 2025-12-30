@@ -1,40 +1,45 @@
-# Configuration file for testing the flocking strategy
-# In this configuration, red agents use the flocking strategy
-# Flocking behavior includes cohesion, alignment, and separation
+# Avoidant Strategy Configuration
+# Flocking Strategy Configuration
 
-dimensions:
-  width: 100
-  height: 80
+experiment_name: "flocking_strategy"
+results_base_dir: "results" # Base directory to store experiment results
 
 agents:
-  # blue_agents:
-  #   - count: 2
-  #     communication_bandwidth: 15 # Max agents it can talk to per step
-  #     processing_capability: 5   # Max past time steps it can use for prediction
-  #     detection_radius: 20.0     # Radius within which the agent can detect Red agents
-  #     strategy_type: "pursuit"  # Move toward predicted positions of red agents
-  #   - count: 2
-  #     communication_bandwidth: 5
-  #     processing_capability: 2
-  #     detection_radius: 15.0     # Different detection radius for this group
-  #     strategy_type: "static"   # Stay stationary
+  blue_agents:
+    - count: 5
+      communication_bandwidth: 15 # Max agents it can talk to per step
+      processing_capability: 2   # Max past time steps it can use for prediction
+      detection_radius: 100.0     # Radius within which the agent can detect Red agents
+      strategy_type: "pursuit"  # Move toward predicted positions of red agents
+      prediction_interval: 10   # Update predictions every 10 steps
 
   red_agents:
-    - count: 16  # All red agents use flocking strategy
+    - count: 30  # All red agents use flocking strategy
       communication_bandwidth: 5
       processing_capability: 3
-      detection_radius: 100.0
+      detection_radius: 200.0     # Increased to ensure they find each other
       strategy_type: "flocking"  # New flocking strategy
       # Flocking-specific parameters
-      cohesion_weight: 500    # Weight for cohesion (moving toward group center)
-      alignment_weight: 1   # Weight for alignment (moving in the same direction as others)
-      separation_weight: 1  # Weight for separation (avoiding crowding)
-      separation_radius: .5   # Distance threshold for separation behavior
+      cohesion_weight: 15.0     # Keeper
+      alignment_weight: 15.0    # Keeper
+      separation_weight: 15.0   # Strong separation for safety
+      separation_radius: 15.0   # Large detection radius for early separation
+      max_speed: 5.0           # Maximum velocity magnitude
+      min_speed: 2.0           # Minimum velocity to prevent stagnation
+      max_force: 0.2           # HIGHER now to allow actual turning
+      wall_avoidance_weight: 5.0 # Very strong avoidance to turn BEFORE hitting wall
+      wall_detection_radius: 200.0 # Start turning 10 pixels away
 
 environment:
   # Environment-specific parameters will go here
-  width: 100  # Width (W) of the Cartesian grid
-  height: 80  # Height (H) of the Cartesian grid
-  render_mode: "human_matplotlib_pred" # Enable rendering with predictions
+  width: 300  # Width (W) of the Cartesian grid
+  height: 300  # Height (H) of the Cartesian grid
+  render_mode: "human_pygame" # Use PyGame rendering for performance
   save_episode_gifs: True
-  max_cycles: 50  # Increase the number of cycles to observe more complex behaviors
+  max_cycles: 1550 # Increase the number of cycles to observe more complex behaviors
+
+training:
+  # Training-specific parameters
+  algorithm: "PPO" # Example
+  num_episodes: 1
+  learning_rate: 0.0003

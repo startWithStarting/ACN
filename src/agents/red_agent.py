@@ -47,17 +47,16 @@ class RedAgent(BaseAgent):
             'direction': spaces.Box(low=np.array([-1.0, -1.0], dtype=np.float32),
                                     high=np.array([1.0, 1.0], dtype=np.float32),
                                     shape=(2,), dtype=np.float32), # Normalized direction vector
-            'speed': spaces.Discrete(11, start=-5)  # Represents integers from -5 to 5
+            'speed': spaces.Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32) # Continuous speed
         })
 
         # Add detection radius for finding other agents
         self.detection_radius = detection_radius
+        self.observed_teammates = {}  # Stores history of teammate positions: {name: [(pos, timestamp), ...]}
         
         # Set the movement strategy type
         self.strategy_type = strategy_type
         
-        # Dictionary to store observed red teammate paths
-        # Key: Teammate name, Value: List of (position, timestamp) tuples
         self.observed_teammates = defaultdict(list)
 
     def record_teammate_movement(self, teammate_name: str, position: Tuple[float, float], timestamp: float):
@@ -67,6 +66,9 @@ class RedAgent(BaseAgent):
         """
         if position is not None and not (position[0] == 0 and position[1] == 0):
             self.observed_teammates[teammate_name].append((position, timestamp))
+            # Keep only the last 3 observations (reduced lag)
+            if len(self.observed_teammates[teammate_name]) > 3:
+                self.observed_teammates[teammate_name].pop(0)
             
     def choose_action(self, observation=None):
         """
@@ -110,11 +112,11 @@ class RedAgent(BaseAgent):
             return team_based_red_strategy(current_pos, grid_center, red_teammates, blue_agents, self.detection_radius)
         elif self.strategy_type == "flocking":
             # For flocking, we need to extract the previous positions of teammates for alignment behavior
-            for teammate_name, teammates_list in self.observed_teammates.items():
-                if teammate_name in red_teammates and len(teammates_list) > 0:
-                    # Add previous positions to the teammate data for alignment calculation
-                    previous_positions = [pos for pos, _ in teammates_list]
-                    red_teammates[teammate_name]['previous_positions'] = previous_positions
+            # For flocking, we need to pass the history list, not the raw observation dict
+            flocking_neighbors = {}
+            for name in red_teammates:
+                if name in self.observed_teammates and self.observed_teammates[name]:
+                     flocking_neighbors[name] = self.observed_teammates[name]
             
             # Get flocking-specific parameters from config if available
             cohesion_weight = observation.get('cohesion_weight', 0.33)
@@ -126,9 +128,10 @@ class RedAgent(BaseAgent):
             timestamp = observation.get('timestamp', 0.0)
             
             return flocking_red_strategy(
-                current_pos, grid_center, red_teammates, blue_agents, 
+                current_pos, grid_center, flocking_neighbors, blue_agents, 
                 self.detection_radius, cohesion_weight, alignment_weight, 
-                separation_weight, separation_radius, timestamp
+                separation_weight, separation_radius, timestamp,
+                observation=observation
             )
         else:  # Default to center-based
             return center_based_movement_strategy(current_pos, grid_center)

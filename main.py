@@ -16,10 +16,21 @@ from src.agents.red_agent import RedAgent
 from src.agents.blue_agent import BlueAgent
 # from src.training.trainer import Trainer # To be uncommented later
 
-def setup_experiment_results_dir(base_results_dir, experiment_name):
+def setup_experiment_results_dir(base_results_dir, experiment_name, config_path):
     """Sets up the directory for saving experiment results."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = os.path.join(base_results_dir, f"{experiment_name}_{timestamp}")
+    
+    # Extract subfolder name from config filename
+    subfolder = "default"
+    if config_path:
+        filename = os.path.basename(config_path)
+        base_name = os.path.splitext(filename)[0]
+        if base_name.endswith("_config"):
+            subfolder = base_name.replace("_config", "")
+        else:
+            subfolder = base_name
+            
+    results_dir = os.path.join(base_results_dir, subfolder, f"{experiment_name}_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
     
     # Create a plots directory within the results directory
@@ -177,7 +188,7 @@ def main(config_path):
 
     experiment_name = config.get("experiment_name", "default_experiment")
     base_results_dir = config.get("results_base_dir", "results")
-    results_dir = setup_experiment_results_dir(base_results_dir, experiment_name)
+    results_dir = setup_experiment_results_dir(base_results_dir, experiment_name, config_path)
 
     print(f"Starting experiment: {experiment_name}")
 

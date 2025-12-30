@@ -8,7 +8,7 @@ agents:
     - count: 5
       communication_bandwidth: 15 # Max agents it can talk to per step
       processing_capability: 5   # Max past time steps it can use for prediction
-      detection_radius: 20.0     # Radius within which the agent can detect Red agents
+      detection_radius: 200.0     # Radius within which the agent can detect Red agents
       strategy_type: "pursuit"  # Move toward predicted positions of red agents
       prediction_interval: 10   # Update predictions every 10 steps
 
@@ -16,18 +16,18 @@ agents:
     - count: 30  # All red agents use avoidant strategy
       communication_bandwidth: 5
       processing_capability: 3
-      detection_radius: 15.0
+      detection_radius: 20.0
       strategy_type: "avoidant"  # Detect and avoid blue agents
 
 environment:
   # Environment-specific parameters will go here
-  width: 100  # Width (W) of the Cartesian grid
-  height: 100  # Height (H) of the Cartesian grid
+  width: 300  # Width (W) of the Cartesian grid
+  height: 300  # Height (H) of the Cartesian grid
   render_mode: "human_pygame" # Use PyGame rendering for performance
   save_episode_gifs: True
   # For example: grid_size, max_steps, reward_structure, etc.
   env_param_1: "value1" # Existing example parameter
-  max_cycles: 150 # Max cycles for the simulation loop in main.py
+  max_cycles: 450 # Max cycles for the simulation loop in main.py
 
 training:
   # Training-specific parameters

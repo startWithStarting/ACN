@@ -2,221 +2,212 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
 def calculate_distance(pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-    """
-    Calculate Euclidean distance between two positions.
-
-    Args:
-        pos1 (Tuple[float, float]): First position (x, y)
-        pos2 (Tuple[float, float]): Second position (x, y)
-
-    Returns:
-        float: Euclidean distance between the positions
-    """
     return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
 
 def is_within_detection_radius(red_pos: Tuple[float, float], 
                              other_pos: Tuple[float, float], 
                              detection_radius: float) -> bool:
-    """
-    Check if another agent is within the red agent's detection radius.
-
-    Args:
-        red_pos (Tuple[float, float]): Position of the Red agent
-        other_pos (Tuple[float, float]): Position of the other agent
-        detection_radius (float): Detection radius of the Red agent
-
-    Returns:
-        bool: True if the other agent is within detection radius, False otherwise
-    """
     if red_pos is None or other_pos is None:
         return False
     return calculate_distance(red_pos, other_pos) <= detection_radius
+
+def limit_magnitude(vector: np.ndarray, max_val: float) -> np.ndarray:
+    """Limit the magnitude of a vector to max_val."""
+    magnitude = np.linalg.norm(vector)
+    if magnitude > max_val and magnitude > 1e-6:
+        return (vector / magnitude) * max_val
+    return vector
 
 def flocking_red_strategy(current_pos: Optional[Tuple[float, float]], 
                         grid_center: Optional[Tuple[float, float]],
                         red_teammates: Dict[str, Dict[str, Any]],
                         blue_agents: Dict[str, Dict[str, Any]],
                         detection_radius: float = 20.0,
-                        cohesion_weight: float = 0.33,
-                        alignment_weight: float = 0.33,
-                        separation_weight: float = 0.33,
-                        separation_radius: float = 1.0,
-                        timestamp: float = 0.0) -> Dict[str, Any]:
+                        cohesion_weight: float = 1.0,
+                        alignment_weight: float = 1.0,
+                        separation_weight: float = 1.0,
+                        separation_radius: float = 4.0,
+                        timestamp: float = 0.0,
+                        observation: Dict[str, Any] = None) -> Dict[str, Any]:
     """
-    A flocking strategy for red agents based on classical flocking behaviors:
-    1. Cohesion - moving toward the average position of red teammates
-    2. Alignment - moving in the same direction as other red teammates
-    3. Separation - moving away from red teammates that are too close
-
-    Args:
-        current_pos (Optional[Tuple[float, float]]): The agent's current position (x, y)
-        grid_center (Optional[Tuple[float, float]]): The center of the grid (x, y)
-        red_teammates (Dict[str, Dict[str, Any]]): Dictionary of red teammates with positions and timestamps
-        blue_agents (Dict[str, Dict[str, Any]]): Dictionary of blue agents with positions
-        detection_radius (float): Radius within which the red agent can detect other agents
-        cohesion_weight (float): Weight given to the cohesion behavior (default: 0.33)
-        alignment_weight (float): Weight given to the alignment behavior (default: 0.33)
-        separation_weight (float): Weight given to the separation behavior (default: 0.33)
-        separation_radius (float): Distance threshold for separation behavior (default: 5.0)
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the 'direction' (normalized numpy array)
-                         and 'speed' (integer).
+    Reynolds Flocking Implementation (Steering Behaviors).
+    Uses Force = Desired - Current Velocity formulation.
     """
-    default_direction = np.array([0.0, 0.0], dtype=np.float32)
-    default_speed = 0  # Default is to stay still
+    if current_pos is None or observation is None:
+        return {'direction': np.array([0.0, 0.0]), 'speed': np.array([0.0])}
 
-    if current_pos is None:
-        return {'direction': default_direction, 'speed': 0}
-        
-    # At the initial time step (timestamp near 0), move toward the center of the grid
-    if timestamp <= 5.0:  # Using 5.0 as threshold to keep the initial behavior for longer
-        # Direction vector toward the grid center
-        if grid_center is not None:
-            # Calculate vector from current position to grid center
-            center_direction = np.array([grid_center[0] - current_pos[0], grid_center[1] - current_pos[1]])
-            center_distance = np.linalg.norm(center_direction)
-            
-            if center_distance > 1e-6:
-                # Normalize the direction vector
-                direction = center_direction / center_distance
-            else:
-                # Already at center, choose a random direction
-                random_direction = np.random.uniform(-1, 1, 2)
-                direction = random_direction / np.linalg.norm(random_direction)
-        else:
-            # No grid center information, use random direction
-            random_direction = np.random.uniform(-1, 1, 2)
-            direction = random_direction / np.linalg.norm(random_direction)
-        
-        # Return maximum speed (5) toward the center
-        return {
-            'direction': direction.astype(np.float32),
-            'speed': 5  # Maximum speed
-        }
+    # Extract Physics Constants from observation (passed from config)
+    MAX_SPEED = observation.get('max_speed', 5.0)
+    MAX_FORCE = observation.get('max_force', 0.1)  # The "Inertia" factor (Lower = Smoother)
 
-    # Filter teammates that are within detection radius and have position data
-    detected_teammates = {}
-    for teammate_name, teammate_data in red_teammates.items():
-        if 'position' in teammate_data and 'timestamp' in teammate_data:
-            if is_within_detection_radius(current_pos, teammate_data['position'], detection_radius):
-                detected_teammates[teammate_name] = teammate_data
-
-    # If no teammates detected, just stay still or move randomly
-    if not detected_teammates:
-        # Generate a small random movement if no information available
-        random_direction = np.random.uniform(-1, 1, 2)
-        norm = np.linalg.norm(random_direction)
-        if norm > 1e-6:
-            random_direction = random_direction / norm
-        return {'direction': random_direction.astype(np.float32), 'speed': 1}
-
-    # Create weighted vectors for each behavior rather than separate direction and speed
-    cohesion_vector = np.array([0.0, 0.0], dtype=np.float32)
-    alignment_vector = np.array([0.0, 0.0], dtype=np.float32)
-    separation_vector = np.array([0.0, 0.0], dtype=np.float32)
+    current_p_vec = np.array(current_pos)
     
-    # 1. COHESION - Vector toward the average position of teammates
-    if detected_teammates:
-        # Calculate average position of teammates
-        teammate_positions = [data['position'] for data in detected_teammates.values()]
-        avg_position = np.mean(teammate_positions, axis=0)
-        
-        # Vector toward average position - magnitude represents strength
-        cohesion_vector = np.array([avg_position[0] - current_pos[0], 
-                                  avg_position[1] - current_pos[1]])
+    # Get Current Velocity
+    current_dir = observation.get('current_direction', (0.0, 0.0))
+    current_spd = observation.get('current_speed', 0.0)
     
-    # 2. ALIGNMENT - Vector in the average direction of teammates' movement
-    # We need teammates that have previous positions to determine direction
-    teammate_velocity_vectors = []
-    for teammate_name, teammate_data in detected_teammates.items():
-        if 'previous_positions' in teammate_data and len(teammate_data['previous_positions']) > 0:
-            current_teammate_pos = teammate_data['position']
-            prev_positions = teammate_data['previous_positions']
-            if prev_positions:
-                prev_teammate_pos = prev_positions[-1]
-                
-                # Calculate velocity vector (not normalized)
-                velocity_vector = np.array([current_teammate_pos[0] - prev_teammate_pos[0],
-                                           current_teammate_pos[1] - prev_teammate_pos[1]])
-                
-                # Only include if it's a significant movement
-                if np.linalg.norm(velocity_vector) > 0.1:  # Threshold to filter out tiny movements
-                    teammate_velocity_vectors.append(velocity_vector)
-    
-    # If we have teammate velocities, calculate the average
-    if teammate_velocity_vectors:
-        alignment_vector = np.mean(teammate_velocity_vectors, axis=0)
+    # If starting from standstill, assume random small velocity to kickstart alignment
+    if current_spd < 0.1:
+        current_velocity = np.random.randn(2)
+        current_velocity = (current_velocity / np.linalg.norm(current_velocity)) * (MAX_SPEED * 0.5)
     else:
-        # If we can't determine alignment, redistribute its weight
-        alignment_weight = 0.0
-        # Distribute the weight to other behaviors
-        if cohesion_weight > 0 or separation_weight > 0:
-            total = cohesion_weight + separation_weight
-            cohesion_weight += (alignment_weight * cohesion_weight / total)
-            separation_weight += (alignment_weight * separation_weight / total)
+        current_velocity = np.array(current_dir) * current_spd
+
+    # --- 1. Calculate Desired Vectors (The "Want" State) ---
     
-    # 3. SEPARATION - Composite vector away from all nearby teammates
-    for teammate_name, teammate_data in detected_teammates.items():
-        distance = calculate_distance(current_pos, teammate_data['position'])
-        if distance < separation_radius and distance > 1e-6:  # Avoid division by zero
-            # Vector pointing away from the teammate
-            away_vector = np.array([current_pos[0] - teammate_data['position'][0],
-                                  current_pos[1] - teammate_data['position'][1]])
+    # Cohesion: Steer towards center of mass
+    center_of_mass = np.zeros(2)
+    neighbor_count = 0
+    
+    # Alignment: Steer towards average heading
+    avg_velocity = np.zeros(2)
+    
+    # Separation: Steer away from crowded neighbors
+    separation_force = np.zeros(2)
+
+    for name, data in red_teammates.items():
+        # Get historical positions
+        history = data  # list of (pos, ts)
+        if not history:
+            continue
             
-            # Scale inversely with distance (closer = stronger repulsion)
-            # This creates a magnitude that increases as agents get closer
-            weight = (separation_radius - distance) / separation_radius
+        teammate_pos = np.array(history[-1][0]) # Use latest position
+        distance = np.linalg.norm(current_p_vec - teammate_pos)
+        
+        if distance < detection_radius and distance > 1e-6:
+            # Cohesion Accumulator
+            center_of_mass += teammate_pos
             
-            # Add to separation vector without normalizing first
-            separation_vector += weight * away_vector
+            # Alignment Accumulator (Calculate teammate velocity)
+            if len(history) > 1:
+                oldest_pos = np.array(history[0][0])
+                steps = len(history) - 1
+                if steps > 0:
+                    teammate_vel = (teammate_pos - oldest_pos) / steps
+                    avg_velocity += teammate_vel
+            
+            # Separation Accumulator (Linear Separation: (Radius - Dist) / Radius)
+            if distance < separation_radius:
+                diff = current_p_vec - teammate_pos
+                # Linear weight: 1.0 at dist=0, 0.0 at dist=radius
+                weight = (separation_radius - distance) / separation_radius
+                # Direction is diff / distance. Force vector = Direction * Weight
+                # So: (diff / distance) * weight
+                if distance > 1e-6:
+                    separation_force += (diff / distance) * weight
+                else:
+                    # If on top of each other, random direction or just use diff if non-zero
+                    separation_force += np.random.randn(2) # Panic separation
+                
+            neighbor_count += 1
+
+    # --- 2. Calculate Steering Forces (The "Correction") ---
+    steering = np.zeros(2)
     
-    if np.linalg.norm(separation_vector) < 1e-6:
-        # If no close teammates, redistribute separation weight
-        separation_weight = 0.0
-        # Distribute the weight to other behaviors
-        if cohesion_weight > 0 or alignment_weight > 0:
-            total = cohesion_weight + alignment_weight
-            cohesion_weight += (separation_weight * cohesion_weight / total)
-            alignment_weight += (separation_weight * alignment_weight / total)
-    
-    # Ensure weights sum to 1.0
-    total_weight = cohesion_weight + alignment_weight + separation_weight
-    if total_weight > 0:
-        cohesion_weight /= total_weight
-        alignment_weight /= total_weight
-        separation_weight /= total_weight
-    
-    # Directly compute the weighted combined vector
-    combined_vector = (cohesion_weight * cohesion_vector + 
-                      alignment_weight * alignment_vector + 
-                      separation_weight * separation_vector)
-    
-    # Calculate magnitude (speed) and normalize direction
-    combined_magnitude = np.linalg.norm(combined_vector)
-    
-    if combined_magnitude > 1e-6:
-        # Extract direction (normalized vector)
-        direction = combined_vector / combined_magnitude
-    else:
-        # No clear movement, use a direction toward the center of the grid
+    if neighbor_count > 0:
+        # A. Cohesion Steering
+        center_of_mass /= neighbor_count
+        desired_cohesion = center_of_mass - current_p_vec # Vector to target
+        # Normalize and scale to max speed (Desired Velocity)
+        if np.linalg.norm(desired_cohesion) > 0:
+            desired_cohesion = (desired_cohesion / np.linalg.norm(desired_cohesion)) * MAX_SPEED
+        steer_cohesion = desired_cohesion - current_velocity
+        steer_cohesion = limit_magnitude(steer_cohesion, MAX_FORCE) # Limit the turn rate
+        
+        # B. Alignment Steering
+        avg_velocity /= neighbor_count
+        if np.linalg.norm(avg_velocity) > 0:
+            avg_velocity = (avg_velocity / np.linalg.norm(avg_velocity)) * MAX_SPEED
+        steer_alignment = avg_velocity - current_velocity
+        steer_alignment = limit_magnitude(steer_alignment, MAX_FORCE)
+        
+        # C. Separation Steering
+        # Separation is usually a direct force, but we can treat it as desired velocity too
+        if np.linalg.norm(separation_force) > 0:
+            separation_force = (separation_force / np.linalg.norm(separation_force)) * MAX_SPEED
+        steer_separation = separation_force - current_velocity
+        steer_separation = limit_magnitude(steer_separation, MAX_FORCE * 1.5) # Allow stronger separation
+        
+        # D. Wall Avoidance Steering
+        wall_weight = observation.get('wall_avoidance_weight', 5.0)
+        wall_radius = observation.get('wall_detection_radius', 10.0)
+        wall_force = np.zeros(2)
+        
+        # Grid dimensions (using 100x100 default as per config, but ideally should be passed)
+        # We can infer from grid_center * 2 if available, or use defaults
+        grid_w, grid_h = 100.0, 100.0 
         if grid_center is not None:
-            center_direction = np.array([grid_center[0] - current_pos[0], grid_center[1] - current_pos[1]])
-            center_distance = np.linalg.norm(center_direction)
+             grid_w, grid_h = grid_center[0] * 2, grid_center[1] * 2
+
+        # Left Wall
+        if current_p_vec[0] < wall_radius:
+            dist = max(0.1, current_p_vec[0])
+            wall_force[0] += 1.0 / (dist * dist)
+        # Right Wall
+        elif current_p_vec[0] > grid_w - wall_radius:
+            dist = max(0.1, grid_w - current_p_vec[0])
+            wall_force[0] -= 1.0 / (dist * dist)
+        
+        # Top Wall (0)
+        if current_p_vec[1] < wall_radius:
+            dist = max(0.1, current_p_vec[1])
+            wall_force[1] += 1.0 / (dist * dist)
+        # Bottom Wall
+        elif current_p_vec[1] > grid_h - wall_radius:
+            dist = max(0.1, grid_h - current_p_vec[1])
+            wall_force[1] -= 1.0 / (dist * dist)
             
-            if center_distance > 1e-6:
-                direction = center_direction / center_distance
-            else:
-                # Already at center, choose a random direction
-                random_direction = np.random.uniform(-1, 1, 2)
-                direction = random_direction / np.linalg.norm(random_direction)
-        else:
-            # No grid center information, use random direction
-            random_direction = np.random.uniform(-1, 1, 2)
-            direction = random_direction / np.linalg.norm(random_direction)
+        if np.linalg.norm(wall_force) > 0:
+             wall_force = (wall_force / np.linalg.norm(wall_force)) * MAX_SPEED
+        
+        steer_wall = wall_force - current_velocity
+        steer_wall = limit_magnitude(steer_wall, MAX_FORCE * 2.0) # Allow sharper turns for walls
+
+        # Apply Weights
+        steering += steer_cohesion * cohesion_weight
+        steering += steer_alignment * alignment_weight
+        steering += steer_separation * separation_weight
+        steering += steer_wall * wall_weight
+        
+    else:
+        # No neighbors? Wander or seek center
+        if grid_center is not None:
+            desired = np.array(grid_center) - current_p_vec
+            if np.linalg.norm(desired) > 0:
+                desired = (desired / np.linalg.norm(desired)) * MAX_SPEED
+            steer = desired - current_velocity
+            steering += limit_magnitude(steer, MAX_FORCE)
+
+    # --- 3. Apply Steering to Velocity ---
+    # Clamp total steering force one last time to be safe
+    steering = limit_magnitude(steering, MAX_FORCE)
     
-    # Always use maximum speed (5) to ensure significant movement
+    new_velocity = current_velocity + steering
+    
+    # --- 4. Limit Speed ---
+    # Enforce Minimum Speed (Anti-Stagnation)
+    MIN_SPEED = observation.get('min_speed', 2.0)
+    
+    current_speed_mag = np.linalg.norm(new_velocity)
+    
+    if current_speed_mag < MIN_SPEED and current_speed_mag > 1e-6:
+        new_velocity = (new_velocity / current_speed_mag) * MIN_SPEED
+    elif current_speed_mag > MAX_SPEED:
+         new_velocity = (new_velocity / current_speed_mag) * MAX_SPEED
+    
+    # Calculate output direction and speed
+    speed_mag = np.linalg.norm(new_velocity)
+    if speed_mag > 1e-6:
+        new_dir = new_velocity / speed_mag
+    else:
+        # Ensure fallback is a numpy array
+        if current_dir is not None:
+             new_dir = np.array(current_dir)
+        else:
+             new_dir = np.array([1.0, 0.0])
+        speed_mag = 0.0
+
     return {
-        'direction': direction.astype(np.float32),
-        'speed': 10  # Maximum speed for all agents
+        'direction': new_dir.astype(np.float32),
+        'speed': np.array([speed_mag], dtype=np.float32)
     }

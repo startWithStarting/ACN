@@ -15,7 +15,9 @@ class BlueAgent(BaseAgent):
     Represents a Blue agent in the simulation.
     """
     def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, 
-                 detection_radius: float = 20.0, strategy_type: str = "pursuit"):
+                 detection_radius: float = 20.0, strategy_type: str = "pursuit", prediction_timeout: int = 5,
+                 observation_window_size: int = 5, prediction_interval: int = 1, grid_size: Tuple[float, float] = (100.0, 100.0),
+                 debug_mode: bool = False):
         """
         Initializes a Blue agent.
 
@@ -27,6 +29,11 @@ class BlueAgent(BaseAgent):
             strategy_type (str): Movement strategy to use. Options are:
                                   "static" - Remain stationary
                                   "pursuit" - Move toward predicted red agent positions
+            prediction_timeout (int): Steps before prediction is considered stale
+            observation_window_size (int): History window
+            prediction_interval (int): How often to predict
+            grid_size (Tuple[float, float]): Dimensions of the grid (width, height)
+            debug_mode (bool): Whether to print debug logs
         """
         super().__init__(
             name=name,
@@ -34,6 +41,8 @@ class BlueAgent(BaseAgent):
             communication_bandwidth=communication_bandwidth,
             processing_capability=processing_capability
         )
+        self.grid_size = grid_size
+        self.debug_mode = debug_mode
         # Dictionary to store observed Red agent paths
         # Key: Red agent name, Value: List of (position, timestamp) tuples
         self.observed_red_agents = defaultdict(list)
@@ -57,7 +66,9 @@ class BlueAgent(BaseAgent):
         self.strategy_type = strategy_type
         
         # Optimization: Prediction interval
-        self.prediction_interval = 5
+        self.prediction_interval = prediction_interval
+        self.prediction_timeout = prediction_timeout
+        self.observation_window_size = observation_window_size
         self.steps = 0
         
         # Movement memory/momentum system
@@ -98,6 +109,9 @@ class BlueAgent(BaseAgent):
         """
         if position is not None and not (position[0] == 0 and position[1] == 0):
             self.observed_red_agents[red_agent_name].append((position, timestamp))
+            # Maintain sliding window
+            if len(self.observed_red_agents[red_agent_name]) > self.observation_window_size:
+                self.observed_red_agents[red_agent_name].pop(0)
 
     def get_observed_paths(self) -> Dict[str, List[Tuple[Tuple[float, float], float]]]:
         """
@@ -126,11 +140,25 @@ class BlueAgent(BaseAgent):
             return False
         positions = [pos for pos, _ in self.observed_red_agents[red_agent_name] if not (pos[0] == 0 and pos[1] == 0)]
         positions_array = np.array(positions)  # (num_observations, 2)
-        n = min(self.processing_capability, len(positions) - 1)
+        
+        # Determine number of lags (n)
+        # We need to ensure we have enough samples to fit the model.
+        # samples = len(positions) - n
+        # We want samples to be at least 3 if possible for stability.
+        min_samples = 3
+        max_n = len(positions) - min_samples
+        
+        # n must be at least 1, and max_n might be negative if len(positions) is small
+        n = max(1, min(self.processing_capability, max_n))
+        
+        # If we still don't have enough data for even n=1 (e.g. len=2), n will be 1
+        # and we'll get 1 sample. That's the best we can do for very short history.
         if n < 1:
-            return False
+            return False 
+            
         if len(positions_array) < n + 1:
             return False
+            
         # Build windowed X and y
         X = []
         y = []
@@ -173,16 +201,49 @@ class BlueAgent(BaseAgent):
         # Check time gap: if current_time is provided and last observation is too old, do not predict
         if current_time is not None:
             last_obs_time = observations[-1][1]
-            if current_time - last_obs_time > 3:
+            if current_time - last_obs_time > self.prediction_timeout:
                 return None
         if red_agent_name not in self.prediction_models:
             if not self.fit_prediction_model(red_agent_name):
                 last_pos, _ = observations[-1]
                 return last_pos
-        n = min(self.processing_capability, len(observations) - 1)
+        
+        # Calculate n exactly as in fit_prediction_model
+        min_samples = 3
+        max_n = len(observations) - min_samples
+        n = max(1, min(self.processing_capability, max_n))
+        
         if n < 1:
             return None
         recent_positions = np.array([pos for pos, _ in observations])
+        
+        # FALLBACK: If we have very few points (e.g. only 2 points -> 1 sample),
+        # LinearRegression fits a constant (mean) instead of a slope, causing "collapsed" predictions.
+        # So for len < 3, we use simple velocity projection (Last - Prev).
+        if len(recent_positions) < 3 and len(recent_positions) >= 2:
+            # Calculate last velocity
+            velocity = recent_positions[-1] - recent_positions[-2]
+            
+            # Project forward
+            preds = []
+            curr = recent_positions[-1].copy()
+            for _ in range(steps_ahead):
+                curr += velocity
+                # Clamp
+                curr[0] = max(0.0, min(curr[0], self.grid_size[0]))
+                curr[1] = max(0.0, min(curr[1], self.grid_size[1]))
+                # preds.append(curr.copy()) # We want the FINAL point? Or list?
+                # The function returns a single point (or list?).
+                # Wait, fit_prediction_model implies VectorAutoRegressor which predicts LIST.
+                # BUT this function `predict_future_position` returns `last_pos` (single tuple) 
+                # OR runs a loop `for _ in range(1, steps_ahead)`.
+                # BUT the `VectorAutoRegressor` usually returns a sequence.
+                # Let's check what `predict_future_position` usually returns.
+                # It returns `predicted_position` which is `x, y`. Sample: `return last_pos`.
+                # So it returns SINGLE coordinate.
+                pass
+            return tuple(curr)
+
         if recent_positions.shape[0] < n:
             return None
         # Use the last n positions for prediction
@@ -193,7 +254,18 @@ class BlueAgent(BaseAgent):
             for _ in range(1, steps_ahead):
                 features = np.vstack([features[1:], predicted_position])
                 predicted_position = model.predict(features)
-            return tuple(predicted_position)
+            
+            # SANITY CHECK: Clean up prediction
+            if np.any(np.isnan(predicted_position)) or np.any(np.isinf(predicted_position)):
+                last_pos, _ = observations[-1]
+                return last_pos
+                
+            # Clamp to grid size
+            x, y = predicted_position
+            x = max(0.0, min(x, self.grid_size[0]))
+            y = max(0.0, min(y, self.grid_size[1]))
+            
+            return (x, y)
         except Exception as e:
             # print(f"Error in prediction for {red_agent_name}: {e}")
             last_pos, _ = observations[-1]
@@ -231,6 +303,28 @@ class BlueAgent(BaseAgent):
         # Optimization: Only update predictions every prediction_interval steps
         self.steps += 1
         if self.steps % self.prediction_interval == 0:
+            # Active Pruning: Remove stale agents that haven't been seen for a while
+            # This prevents "ghost" attraction to where agents USED to be.
+            stale_agents = []
+            for red_name, observations in self.observed_red_agents.items():
+                if not observations:
+                    stale_agents.append(red_name)
+                    continue
+                last_obs_time = observations[-1][1]
+                if timestamp - last_obs_time > self.prediction_timeout:
+                    stale_agents.append(red_name)
+            
+            for red_name in stale_agents:
+                if red_name in self.observed_red_agents:
+                    del self.observed_red_agents[red_name]
+                if red_name in self.predicted_positions:
+                    del self.predicted_positions[red_name]
+                if red_name in self.prediction_models:
+                    del self.prediction_models[red_name]
+                # maintain prediction_history for analysis
+                # if red_name in self.prediction_history:
+                #    del self.prediction_history[red_name]
+
             # Calculate new predicted target position
             new_predictions = {}
             
@@ -243,10 +337,21 @@ class BlueAgent(BaseAgent):
                 
                 # If model was successfully fitted, make predictions for future positions
                 if model_fitted or red_name in self.prediction_models:
+                    # CRITICAL FIX: Clear old cached predictions before generating new ones
+                    if red_name in self.predicted_positions:
+                        del self.predicted_positions[red_name]
+                        
                     # Make prediction for the next step (steps_ahead=1)
                     next_step_prediction = self.predict_future_position(red_name, 1, current_time=timestamp)
+                    if self.debug_mode:
+                        print(f"DEBUG: {self.name} prediction for {red_name}: {next_step_prediction}")
+                    
                     if next_step_prediction is not None and not (next_step_prediction[0] == 0 and next_step_prediction[1] == 0):
                         self.prediction_history[red_name].append((next_step_prediction, timestamp))
+                    else:
+                        if self.debug_mode:
+                            print(f"DEBUG: {self.name} prediction invalid or None")
+                        pass
                         
                     # Store predictions for the next 5 steps (for visualization)
                     future_positions = []

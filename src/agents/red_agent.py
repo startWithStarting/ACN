@@ -30,6 +30,8 @@ class RedAgent(BaseAgent):
                                   "avoidant" - Detect and avoid blue agents
                                   "aggressive" - Detect and pursue blue agents
                                   "team" - Move toward red teammates
+                                  "flocking" - Flocking behavior with neighbors
+                                  "trainable" - Controlled by external policy (RL)
         """
         super().__init__(
             name=name,
@@ -133,6 +135,11 @@ class RedAgent(BaseAgent):
                 separation_weight, separation_radius, timestamp,
                 observation=observation
             )
+        elif self.strategy_type == "trainable":
+            # For trainable agents, the action is typically provided externally during training (e.g. via step(action)).
+            # If choose_action is called (e.g. during inference without a model wrapper), we strictly rely on input.
+            # Here we just return a no-op placeholder if forced, but usually the Trainer controls this.
+            return {'direction': np.array([0.0, 0.0], dtype=np.float32), 'speed': 0}
         else:  # Default to center-based
             return center_based_movement_strategy(current_pos, grid_center)
 

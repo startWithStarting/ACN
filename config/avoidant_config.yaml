@@ -5,12 +5,14 @@ results_base_dir: "results" # Base directory to store experiment results
 
 agents:
   blue_agents:
-    - count: 5
+    - count: 30
       communication_bandwidth: 15 # Max agents it can talk to per step
-      processing_capability: 5   # Max past time steps it can use for prediction
-      detection_radius: 200.0     # Radius within which the agent can detect Red agents
+      processing_capability: 30  # Max past time steps it can use for prediction
+      detection_radius: 50.0     # Radius within which the agent can detect Red agents
       strategy_type: "pursuit"  # Move toward predicted positions of red agents
-      prediction_interval: 10   # Update predictions every 10 steps
+      prediction_interval: 1   # Update predictions every 1 step
+      prediction_timeout: 4     # Stop predicting if agent unseen for > 4 steps
+      observation_window_size: 5 # Number of past steps to use for prediction
 
   red_agents:
     - count: 30  # All red agents use avoidant strategy
@@ -25,9 +27,8 @@ environment:
   height: 300  # Height (H) of the Cartesian grid
   render_mode: "human_pygame" # Use PyGame rendering for performance
   save_episode_gifs: True
-  # For example: grid_size, max_steps, reward_structure, etc.
-  env_param_1: "value1" # Existing example parameter
-  max_cycles: 450 # Max cycles for the simulation loop in main.py
+  max_cycles: 150 # Max cycles for the simulation loop in main.py
+  debug_mode: False # Enable verbose logging and JSON position recording
 
 training:
   # Training-specific parameters

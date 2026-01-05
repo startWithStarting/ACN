@@ -109,6 +109,9 @@ def main(config_path):
 
     print(f"Starting PARALLEL experiment: {experiment_name}")
 
+    # Load env_config first to pass grid dimensions to agents
+    env_config = config.get("environment", {})
+    
     # 1. Create agents
     agents_config = config.get("agents", {})
     blue_agents_specs = agents_config.get("blue_agents", [])
@@ -127,7 +130,13 @@ def main(config_path):
                                       spec.get("communication_bandwidth", 0),
                                       spec.get("processing_capability", 0),
                                       spec.get("detection_radius", 20.0),
-                                      spec.get("strategy_type", "pursuit")))
+                                      spec.get("strategy_type", "pursuit"),
+                                      spec.get("prediction_timeout", 50),
+                                      spec.get("observation_window_size", 5),
+                                      spec.get("prediction_interval", 1),
+                                      grid_size=(float(env_config.get("width", 100)), 
+                                                 float(env_config.get("height", 100))),
+                                      debug_mode=env_config.get("debug_mode", False)))
             agent_id_counter += 1
 
     for spec in red_agents_specs:
@@ -148,7 +157,7 @@ def main(config_path):
     print(f"Created {len(all_agents)} agents.")
 
     # 2. Set up Parallel Environment
-    env_config = config.get("environment", {})
+    # env_config already loaded
     env_config["experiment_results_dir"] = results_dir
 
     # Initialize Parallel Env
@@ -209,6 +218,35 @@ def main(config_path):
     
     print("Generating plots...")
     save_prediction_plots(blue_agents, results_dir)
+    
+    # Save raw position data for analysis if in debug mode
+    if env_config.get("debug_mode", False):
+        import json
+        data_export = {}
+        for agent in blue_agents:
+            agent_data = {
+                "prediction_history": {},
+                "actual_history": {}
+            }
+            # Convert tuples/numpy arrays to lists for JSON serialization
+            if hasattr(agent, 'prediction_history'):
+                for red_name, history in agent.prediction_history.items():
+                    # History is list of ((x,y), t)
+                    # Convert numpy types if present
+                    agent_data["prediction_history"][red_name] = [
+                        ([float(pos[0]), float(pos[1])], float(t)) for pos, t in history
+                    ]
+            if hasattr(agent, 'actual_position_history'):
+                for red_name, history in agent.actual_position_history.items():
+                    agent_data["actual_history"][red_name] = [
+                        ([float(pos[0]), float(pos[1])], float(t)) for pos, t in history
+                    ]
+            data_export[agent.name] = agent_data
+            
+        json_path = os.path.join(results_dir, "position_records.json")
+        with open(json_path, "w") as f:
+            json.dump(data_export, f, indent=2)
+        print(f"Position records saved to: {json_path}")
     print("Done.")
 
 if __name__ == "__main__":

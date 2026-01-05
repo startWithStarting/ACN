@@ -1,189 +1,227 @@
-# Placeholder for the Reinforcement Learning Training Logic
-
 import os
-# Import necessary RL libraries (e.g., Stable Baselines3, RLlib, PyTorch, TensorFlow)
-# from stable_baselines3 import PPO # Example
-# import torch
+import numpy as np
+import gymnasium
+import torch
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.callbacks import CheckpointCallback
+import supersuit as ss
+from pettingzoo.utils.env import ParallelEnv
+
+# Import the parallel environment
+from src.env.parallel_env import ParallelGameEnv
+
+class RedTeamWrapper(ParallelEnv):
+    """
+    Wraps the ParallelGameEnv to expose only Red agents to the learner.
+    Blue agents are treated as part of the environment (stepped internally).
+    """
+    def __init__(self, env):
+        self.env = env
+        self.metadata = env.metadata
+        self.render_mode = env.render_mode
+        self.possible_agents = [a for a in env.possible_agents if "red" in a]
+        self.blue_agents = [a for a in env.possible_agents if "blue" in a]
+        self.agent_name_mapping = dict(zip(self.possible_agents, range(len(self.possible_agents))))
+        
+    @property
+    def observation_spaces(self):
+        return {agent: self.env.observation_space(agent) for agent in self.possible_agents}
+
+    @property
+    def action_spaces(self):
+        return {agent: self.action_space(agent) for agent in self.possible_agents}
+
+    def observation_space(self, agent):
+        return self.env.observation_space(agent)
+
+    def action_space(self, agent):
+        # Flattened action space for PPO: [dir_x, dir_y, speed]
+        # Direction elements are [-1, 1], Speed is [0, 10]
+        return gymnasium.spaces.Box(
+            low=np.array([-1.0, -1.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 10.0], dtype=np.float32),
+            dtype=np.float32
+        )
+
+    def reset(self, seed=None, options=None):
+        obs, infos = self.env.reset(seed=seed, options=options)
+        self.agents = [a for a in self.env.agents if "red" in a]
+        
+        # Filter observations for red agents only
+        red_obs = {k: v for k, v in obs.items() if k in self.agents}
+        red_infos = {k: v for k, v in infos.items() if k in self.agents}
+        return red_obs, red_infos
+
+    def step(self, actions):
+        # 1. Get actions for Blue agents (heuristic/environment managed)
+        curr_obs = {agent: self.env._get_observation(agent, self.env.steps) for agent in self.blue_agents}
+        blue_actions = {}
+        for blue_name in self.blue_agents:
+            if blue_name in self.env.agents: # Only if active
+                blue_obj = self.env.agent_objects[blue_name]
+                # Blue agents usually use 'choose_action' which returns a dict
+                # We pass the observation if needed
+                action = blue_obj.choose_action(curr_obs.get(blue_name))
+                blue_actions[blue_name] = action
+        
+        # 1.1 Unflatten Red actions (from PPO Learner)
+        red_actions = {}
+        for agent, act in actions.items():
+            if agent in self.possible_agents:
+                 # act is [dx, dy, speed]
+                 # Ensure types match what RedAgent expects (numpy arrays)
+                 red_actions[agent] = {
+                     'direction': np.array(act[:2], dtype=np.float32),
+                     'speed': np.array([act[2]], dtype=np.float32)
+                 }
+            else:
+                 red_actions[agent] = act
+        
+        # 2. Combine with Red actions
+        full_actions = {**red_actions, **blue_actions}
+        
+        # 3. Step internal environment
+        obs, rewards, terminations, truncations, infos = self.env.step(full_actions)
+        
+        # 4. Filter for Red agents
+        self.agents = [a for a in self.env.agents if "red" in a]
+        
+        red_obs = {k: v for k, v in obs.items() if k in self.agents}
+        red_rewards = {k: v for k, v in rewards.items() if k in self.agents}
+        red_terminations = {k: v for k, v in terminations.items() if k in self.agents}
+        red_truncations = {k: v for k, v in truncations.items() if k in self.agents}
+        red_infos = {k: v for k, v in infos.items() if k in self.agents}
+        
+        # PettingZoo API requires returning dicts keyed by agent
+        return red_obs, red_rewards, red_terminations, red_truncations, red_infos
+
+    def render(self):
+        return self.env.render()
+    
+    def close(self):
+        self.env.close()
 
 class Trainer:
     """
-    Manages the MADRL training process.
+    Manages the MADRL training process using Stable Baselines 3.
     """
-    def __init__(self, env, agents: list, config: dict, results_dir: str):
+    def __init__(self, agents: list, config: dict, results_dir: str):
         """
         Initializes the Trainer.
-
-        Args:
-            env: The PettingZoo AEC environment instance.
-            agents (list): The list of agent objects.
-            config (dict): Training-specific configuration parameters.
-            results_dir (str): Directory to save training results (models, logs).
         """
-        self.env = env
-        self.agents = agents # List of agent objects
-        self.agent_policies = {} # Dictionary mapping agent_name to its policy/model
+        self.agents = agents
         self.config = config
         self.results_dir = results_dir
-
-        self.algorithm = config.get("algorithm", "PPO") # Example: Get algo from config
-        self.num_episodes = config.get("num_episodes", 1000)
-        self.learning_rate = config.get("learning_rate", 0.0003)
-        # Add other training parameters (batch size, discount factor, etc.)
-
-        print(f"Initializing Trainer with algorithm: {self.algorithm}, episodes: {self.num_episodes}")
-        print(f"Training config: {self.config}")
-        print(f"Results will be saved to: {self.results_dir}")
-
-        self._setup_policies()
-
-    def _setup_policies(self):
-        """
-        Initializes the RL policies for each agent.
-        This might involve creating separate models or a shared model depending on the strategy.
-        """
-        print("Setting up RL policies for agents...")
-        # Example: Create a policy for each agent (could be shared or independent)
-        # observation_space = self.env.observation_space(self.agents[0].name) # Get space from env
-        # action_space = self.env.action_space(self.agents[0].name) # Get space from env
-
-        for agent in self.agents:
-            print(f"  - Initializing policy for {agent.name}")
-            # Placeholder: Initialize actual RL model here based on env spaces and config
-            # self.agent_policies[agent.name] = PPO("MlpPolicy", self.env, ...) # Example SB3
-            self.agent_policies[agent.name] = self._create_dummy_policy(agent) # Dummy policy for now
-
-        print("Policies initialized.")
-
-    def _create_dummy_policy(self, agent):
-        """Creates a placeholder policy function."""
-        # In a real implementation, this would be an instance of an RL model (e.g., a PyTorch nn.Module)
-        def dummy_policy(observation):
-            # Simple policy: return a random action from the agent's action space
-            # Note: Accessing action space might need the agent's name
-            agent_name = agent.name
-            if self.env.action_space(agent_name):
-                 return self.env.action_space(agent_name).sample()
-            else:
-                 return None # Or handle appropriately if no action space (e.g., agent is done)
-        return dummy_policy
-
+        
+        # Extract training params
+        self.total_timesteps = config.get("total_timesteps", 100000)
+        self.learning_rate = config.get("learning_rate", 3e-4)
+        self.n_steps = config.get("n_steps", 2048)
+        self.batch_size = config.get("batch_size", 64)
+        self.gamma = config.get("gamma", 0.99)
+        self.ent_coef = config.get("ent_coef", 0.01)
+        
+        # Env config
+        self.env_config = config.get("environment", {})
+        self.env_config["experiment_results_dir"] = results_dir
+        
+        print(f"Initializing PPO Trainer. Timesteps: {self.total_timesteps}")
 
     def train(self):
         """
-        Runs the main training loop.
+        Runs the training using Stable Baselines 3 PPO.
         """
-        print(f"\nStarting training for {self.num_episodes} episodes...")
-
-        for episode in range(self.num_episodes):
-            print(f"\n--- Episode {episode + 1}/{self.num_episodes} ---")
-            # Reset the environment at the start of each episode
-            self.env.reset()
-            episode_rewards = {agent.name: 0 for agent in self.agents}
-            episode_steps = 0
-
-            # PettingZoo AEC loop
-            for agent_name in self.env.agent_iter():
-                observation, reward, terminated, truncated, info = self.env.last()
-
-                # Accumulate rewards
-                # Note: In AEC, env.last() returns the *previous* agent's reward.
-                # We need a way to map this back correctly or handle rewards at the end.
-                # For simplicity here, let's assume reward is for the *current* agent_name about to act.
-                # (This might need adjustment based on specific env implementation)
-                if agent_name in episode_rewards:
-                     episode_rewards[agent_name] += reward
-
-                if terminated or truncated:
-                    # Agent is done, step the environment with None action
-                    action = None
-                    # Optionally handle agent removal or logging here
-                    # print(f"Agent {agent_name} finished step {episode_steps}. Terminated: {terminated}, Truncated: {truncated}")
-                else:
-                    # Agent needs to act: get action from its policy
-                    policy = self.agent_policies[agent_name]
-                    action = policy(observation) # Get action from the RL policy
-                    # print(f"Step {episode_steps}: Agent {agent_name} observes, takes action {action}")
-
-
-                # Step the environment
-                self.env.step(action)
-                episode_steps += 1
-
-                # Check if the environment loop should break (e.g., max steps per episode)
-                # This depends on the environment's termination/truncation logic.
-                # If all agents are done, agent_iter will stop.
-
-            # End of episode
-            total_episode_reward = sum(episode_rewards.values())
-            print(f"Episode {episode + 1} finished after {episode_steps} steps.")
-            print(f"Total Reward: {total_episode_reward}")
-            print(f"Rewards per agent: {episode_rewards}")
-
-            # Placeholder for policy updates (e.g., PPO update step)
-            self._update_policies(episode)
-
-            # Placeholder for saving models periodically
-            if (episode + 1) % 100 == 0: # Save every 100 episodes (example)
-                self.save_models(episode + 1)
-
-        print("\nTraining finished.")
-        self.env.close()
-
-
-    def _update_policies(self, episode_num):
+        # 1. Create the base Parallel Environment
+        base_env = ParallelGameEnv(agents=self.agents, **self.env_config)
+        
+        # 2. Wrap it to expose only Red agents
+        red_env = RedTeamWrapper(base_env)
+        
+        # 3. Vectorize with SuperSuit for SB3 compatibility
+        # concat_vec_envs_v1 creates a single vectorized environment where agents are concatenated in the batch dimension
+        # This allows parameter sharing (one policy for all red agents)
+        env = ss.pettingzoo_env_to_vec_env_v1(red_env)
+        env = ss.concat_vec_envs_v1(env, 1, num_cpus=1, base_class='stable_baselines3') # 1 vec env, parallelized
+        env = VecMonitor(env)
+        
+        # 4. Initialize PPO
+        # using 'MultiInputPolicy' because our observation is a Dict space
+        model = PPO(
+            "MultiInputPolicy",
+            env,
+            verbose=1,
+            learning_rate=self.learning_rate,
+            n_steps=self.n_steps,
+            batch_size=self.batch_size,
+            gamma=self.gamma,
+            ent_coef=self.ent_coef,
+            tensorboard_log=os.path.join(self.results_dir, "logs")
+        )
+        
+        # 5. Train
+        print("\nStarting PPO training...")
+        checkpoint_callback = CheckpointCallback(
+            save_freq=10000,
+            save_path=os.path.join(self.results_dir, "models"),
+            name_prefix="red_agent_ppo"
+        )
+        
+        model.learn(total_timesteps=self.total_timesteps, callback=checkpoint_callback)
+        
+        # 6. Save final model
+        final_path = os.path.join(self.results_dir, "models", "final_model")
+        model.save(final_path)
+        print(f"Training finished. Model saved to {final_path}")
+        
+        # Close env
+        env.close()
+        
+    def load_and_evaluate(self, model_path, num_episodes=5):
         """
-        Performs the policy update step based on collected experience.
+        Loads a trained model and evaluates it.
         """
-        # Placeholder: Implement the actual RL algorithm update logic here.
-        # This would involve using collected trajectories (obs, actions, rewards, next_obs, dones)
-        # to update the parameters of self.agent_policies.
-        # print(f"Updating policies after episode {episode_num + 1}...")
-        pass # No actual update in this placeholder
+        print(f"Loading model from {model_path} for evaluation...")
+        model = PPO.load(model_path)
+        
+        base_env = ParallelGameEnv(agents=self.agents, render_mode="human_pygame", **self.env_config)
+        red_env = RedTeamWrapper(base_env)
+        
+        # We process step-by-step for evaluation to render properly
+        for ep in range(num_episodes):
+            obs, info = red_env.reset()
+            done = False
+            total_reward = 0
+            
+            while not done:
+                # We need to construct actions for the valid agents
+                # SB3 predict expects observation. 
+                # Since we wrapped with supersuit vectorization during training, the model expects vectorized inputs?
+                # Actually PPO.predict handles unvectorized input if we pass a single observation?
+                # But here we have multiple agents.
+                
+                # Simple Manual Loop for Multi-Agent Inference with Shared Policy:
+                actions = {}
+                for agent_name, agent_obs in obs.items():
+                    # Check if model expects vectorized input. PPO.predict usually handles it.
+                    # But if trained on VecEnv, it might expect batch dim.
+                    # Let's simple-wrap the obs or trust SB3.
+                    action, _states = model.predict(agent_obs, deterministic=True)
+                    actions[agent_name] = action
+                
+                obs, rewards, terminations, truncations, infos = red_env.step(actions)
+                
+                # Check if all done
+                if not obs: # no agents left
+                    done = True
+                
+                total_reward += sum(rewards.values())
+                
+                # termination/truncation check
+                if all(terminations.values()) or all(truncations.values()):
+                    done = True
+                    
+            print(f"Episode {ep+1} Reward: {total_reward}")
+        
+        red_env.close()
 
-    def save_models(self, episode_num):
-        """
-        Saves the current state of the agent policies.
-        """
-        model_save_dir = os.path.join(self.results_dir, "models")
-        os.makedirs(model_save_dir, exist_ok=True)
-        print(f"\nSaving models at episode {episode_num} to {model_save_dir}...")
-
-        for agent_name, policy in self.agent_policies.items():
-            # Placeholder: Implement actual model saving (e.g., policy.save(...))
-            policy_path = os.path.join(model_save_dir, f"{agent_name}_policy_ep{episode_num}.pth") # Example extension
-            # torch.save(policy.state_dict(), policy_path) # Example PyTorch saving
-            # Or using SB3: policy.save(policy_path)
-            print(f"  - Saved policy for {agent_name} (placeholder)")
-            # Create dummy file to simulate saving
-            with open(policy_path, 'w') as f:
-                f.write(f"Dummy policy for {agent_name} at episode {episode_num}")
-
-
-    def load_models(self, model_dir):
-        """
-        Loads previously saved agent policies.
-        """
-        print(f"Loading models from {model_dir}...")
-        # Placeholder: Implement actual model loading
-        # for agent_name in self.agent_policies:
-        #     policy_path = os.path.join(model_dir, f"{agent_name}_policy_...") # Need to know which checkpoint
-        #     if os.path.exists(policy_path):
-        #         # self.agent_policies[agent_name].load(policy_path) # Example SB3
-        #         # self.agent_policies[agent_name].load_state_dict(torch.load(policy_path)) # Example PyTorch
-        #         print(f"  - Loaded policy for {agent_name} (placeholder)")
-        #     else:
-        #         print(f"  - Warning: Model file not found for {agent_name} at {policy_path}")
-        pass
-
-    def save_results(self):
-        """
-        Saves final training results (e.g., performance metrics, logs).
-        """
-        # Placeholder: Save learning curves, evaluation results, etc.
-        results_file = os.path.join(self.results_dir, "summary.txt")
-        with open(results_file, 'w') as f:
-            f.write("Training Summary (Placeholder)\n")
-            f.write(f"Algorithm: {self.algorithm}\n")
-            f.write(f"Num Episodes: {self.num_episodes}\n")
-            # Add more details like final average reward, etc.
-        print(f"Training summary saved to {results_file}")

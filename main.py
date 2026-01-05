@@ -177,7 +177,7 @@ def save_prediction_plots(blue_agents, results_dir):
                     plt.savefig(os.path.join(plots_dir, f'{agent.name}_observing_{red_name}_error.png'))
                     plt.close(fig)
 
-def main(config_path):
+def main(config_path, train_mode=False):
     """
     Main function to run the MADRL experiment.
     """
@@ -206,10 +206,14 @@ def main(config_path):
         processing_capability = spec.get("processing_capability", 0)
         detection_radius = spec.get("detection_radius", 20.0)
         strategy_type = spec.get("strategy_type", "pursuit")
+        prediction_timeout = spec.get("prediction_timeout", 50)
+        observation_window_size = spec.get("observation_window_size", 5)
+        prediction_interval = spec.get("prediction_interval", 1)
         for _ in range(count):
             agent_name = f"blue_{agent_id_counter}"
             all_agents.append(BlueAgent(agent_name, communication_bandwidth, processing_capability, 
-                                     detection_radius, strategy_type))
+                                     detection_radius, strategy_type, prediction_timeout, observation_window_size,
+                                     prediction_interval))
             agent_id_counter += 1
 
     for spec in red_agents_specs:
@@ -231,6 +235,13 @@ def main(config_path):
     print(f"Created {len(all_agents)} agents.")
     for agent in all_agents:
         print(f"  - {agent.name}: Type={agent.agent_type}, Comm={agent.communication_bandwidth}, Proc={agent.processing_capability}")
+
+    if train_mode:
+        from src.training.trainer import Trainer
+        print("\n--- ENTERING TRAINING MODE ---")
+        trainer = Trainer(agents=all_agents, config=config, results_dir=results_dir)
+        trainer.train()
+        return
 
     # 2. Set up the game environment
     env_config = config.get("environment", {})
@@ -341,5 +352,11 @@ if __name__ == "__main__":
         default=os.getenv("ACN_CONFIG_PATH", "config/avoidant_config.yaml"),
         help="Path to the experiment configuration file (YAML or JSON)."
     )
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Run in training mode (PPO) instead of simulation mode."
+    )
     args = parser.parse_args()
-    main(args.config)
+    main(args.config, train_mode=args.train)
+

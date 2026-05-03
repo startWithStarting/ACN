@@ -169,9 +169,9 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
         combined_direction = random_direction / np.linalg.norm(random_direction)
 
     # Final speed is a weighted combination
-    speed = center_weight * center_speed +
-               team_weight * team_speed +
-               avoidance_weight * avoidance_speed
+    speed = (center_weight * center_speed +
+             team_weight * team_speed +
+             avoidance_weight * avoidance_speed)
 
     # Ensure speed is between 1 and 5
     speed = max(1, min(5, speed))

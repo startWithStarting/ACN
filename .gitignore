@@ -1,8 +1,174 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
-results/
-.windsurf/
-.gitignore/
-.windsurf/
-.pytest_cache
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------------------------------------------------------------------------
+# Virtual environments (uv.lock is committed; the env is not).
+# Anchored to repo root so src/env/ is not accidentally ignored.
+# ---------------------------------------------------------------------------
+/.venv/
+/venv/
+/env/
+/ENV/
+/env.bak/
+/venv.bak/
+
+# ---------------------------------------------------------------------------
+# Test / lint / type-check caches
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.cache/
+nosetests.xml
+
+# ---------------------------------------------------------------------------
+# Jupyter / IPython
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# ---------------------------------------------------------------------------
+# Secrets / local env (keep .env.example)
+# ---------------------------------------------------------------------------
 .env
-.venv/
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Project-generated artifacts
+# ---------------------------------------------------------------------------
+# Per-run outputs: plots, gifs, timing stats, coordinate JSONs
+results/
+# Loguru output (src/utils/logger.py writes here)
+logs/
+*.log
+
+# ---------------------------------------------------------------------------
+# ML / RL training artifacts
+# ---------------------------------------------------------------------------
+# Tensorboard
+runs/
+tb_logs/
+lightning_logs/
+# Weights & Biases
+wandb/
+# MLflow
+mlruns/
+# Model checkpoints (delete these lines if you want to commit small checkpoints)
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# ---------------------------------------------------------------------------
+# Profiling
+# ---------------------------------------------------------------------------
+*.prof
+*.pstats
+
+# ---------------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------------
+# VS Code: ignore per-user files, allow shared settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# ---------------------------------------------------------------------------
+# AI coding assistants (per-user state, chat history, local configs)
+# ---------------------------------------------------------------------------
+# Claude Code
+.claude/settings.local.json
+.claude/projects/
+.claude/todos/
+.claude/memory/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/ide/
+CLAUDE.local.md
+
+# Aider
+.aider*
+
+# Cursor (keep .cursorrules / .cursorignore at repo root)
+.cursor/
+
+# Cline / Roo Code / Continue.dev
+.cline/
+.clinerules/
+.roo/
+.roocode/
+.continue/
+
+# SpecStory
+.specstory/
+
+# Windsurf
+.windsurf/
+
+# Generic AI scratch dirs
+.ai/
+ai_scratch/
+scratch/
+tmp/
+.tmp/
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

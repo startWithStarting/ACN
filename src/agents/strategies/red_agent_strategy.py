@@ -1,7 +1,10 @@
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
 
-def center_based_movement_strategy(current_pos: Optional[Tuple[float, float]], 
+from ..registry import register_strategy
+
+@register_strategy("center", side="red")
+def center_based_movement_strategy(current_pos: Optional[Tuple[float, float]],
                                  grid_center: Optional[Tuple[float, float]]) -> Dict[str, Any]:
     """
     A strategy for red agents: move towards the center of the grid, but maintain a minimum
@@ -39,22 +42,22 @@ def center_based_movement_strategy(current_pos: Optional[Tuple[float, float]],
         # Choose a random direction to move away
         random_direction = np.random.uniform(-1, 1, 2)
         normalized_direction = (random_direction / np.linalg.norm(random_direction)).astype(np.float32)
-        speed = 5  # Move away with a moderate speed
+        speed = 5.0  # Move away with a moderate speed
     elif distance_to_center < min_distance:
         # Too close to center, reverse direction to move away
         normalized_direction = (-direction_vector / distance_to_center).astype(np.float32)
         # Speed proportional to how much closer than min_distance
-        speed = int(5 * (1 + (min_distance - distance_to_center) / min_distance))
+        speed = 5.0 * (1 + (min_distance - distance_to_center) / min_distance)
     else:
         # Moving towards center with speed proportional to distance
         normalized_direction = (direction_vector / distance_to_center).astype(np.float32)
         # Cap the speed at 5 (the maximum for the action space)
-        speed = min(5, int(distance_to_center / 10))
-    
+        speed = min(5.0, distance_to_center / 10.0)
+
     # The action is a dictionary containing direction and speed
     action = {
         'direction': normalized_direction,
-        'speed': speed
+        'speed': np.float32(speed)
     }
-    
+
     return action

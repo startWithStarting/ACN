@@ -1,129 +1,348 @@
 @startuml
 
-title Complete ACN Architecture
+title ACN Architecture (Updated 2026-05-01)
 
 package "src.agents" {
-    enum AgentType {
-        BLUE
-        RED
-    }
-    enum CommsType {
-        DIST
-        GRAPH
-    }
-    abstract class BaseAgent {
+    class BaseAgent {
         - name: str
         - agent_type: AgentType
+        - comms_type: CommsType
         - communication_bandwidth: int
         - processing_capability: int
-        - comms_type: CommsType
-        - x: float  
-        - y: float  
-        - speed: float  
-        - direction: Tuple[float, float]  
-        - is_active: bool  
-        - action_space: spaces.Space  
-        + __init__(name, agent_type, communication_bandwidth, processing_capability, comms_type, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
+        - x: float
+        - y: float
+        - speed: float
+        - direction: Tuple[float, float]
+        - is_active: bool
         + choose_action(observation)
         + receive_message(sender_name, message_content)
         + send_message(recipient_name, message_content)
-        + get_observation(sub_env)
     }
     class BlueAgent {
         - detection_radius: float
-        - observed_red_agents: Dict[str, List[Tuple[Tuple[float, float], float]]]
-        + __init__(name, communication_bandwidth, processing_capability, detection_radius=5.0, comms_type=CommsType.DIST, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
-        + calculate_distance(pos1, pos2): float
-        + is_within_detection_radius(red_agent_pos): bool
-        + record_red_agent_movement(red_agent_name, position, timestamp)
-        + get_observed_paths(): Dict[str, List[Tuple[Tuple[float, float], float]]]
+        - observed_red_agents: Dict
+        - prediction_models: Dict
+        - max_history_length: int
+        - prediction_history: Dict
+        - actual_position_history: Dict
+        - strategy: str
         + choose_action(observation)
+        + record_red_agent_movement(name, position, timestamp)
+        + predict_red_positions(red_agent_name)
     }
     class RedAgent {
-        + __init__(name, communication_bandwidth, processing_capability, comms_type=CommsType.DIST, x=0.0, y=0.0, speed=1.0, direction=(1.0, 0.0))
+        - strategy: str
+        - strategy_type: str
         + choose_action(observation)
     }
     BaseAgent <|-- BlueAgent
     BaseAgent <|-- RedAgent
-    BaseAgent .. AgentType
-    BaseAgent .. CommsType
 }
+
+package "src.agents.strategies" {
+    class RedAgentStrategy {
+        + center_based_movement_strategy(current_pos, grid_center)
+        + avoidant_movement_strategy(current_pos, blue_agents)
+        + aggressive_movement_strategy(current_pos, blue_agents)
+        + team_based_movement_strategy(current_pos, red_teammates)
+        + flocking_movement_strategy(current_pos, red_teammates, params)
+    }
+    note right of RedAgentStrategy
+      Registered via @register_strategy decorator
+    end note
+}
+
+package "src.agents.blue_strategies" {
+    class BlueStrategy {
+        + static_strategy(agent, env_state)
+        + pursuit_strategy(agent, env_state)
+    }
+}
+
+package "src.agents.factory" {
+    class AgentFactory {
+        + create_agents_from_config(agents_config, env_config)
+        + create_agent(agent_type, **kwargs)
+    }
+    AgentFactory --> BlueAgent
+    AgentFactory --> RedAgent
+}
+
+package "src.agents.registry" {
+    class AgentRegistry {
+        - _AGENT_REGISTRY: Dict
+        - _STRATEGY_REGISTRY: Dict
+        + register_agent(agent_type)
+        + register_strategy(name, side)
+        + create_agent(agent_type, **kwargs)
+        + get_strategy(name, side)
+        + list_strategies(side)
+    }
+    AgentRegistry --> BaseAgent
+}
+
 package "src.env" {
     class AECGameEnv {
-        - metadata: dict
-        - env_config: dict
-        - grid_width: float  
-        - grid_height: float  
-        - save_episode_gifs: bool  
-        - gif_dir: str  
-        - gif_figsize: tuple  
-        - episode_gif_frames: list  
-        - current_episode_number: int  
-        - agent_objects: Dict[str, BaseAgent]
+        - agent_objects: Dict
         - possible_agents: list
-        - agent_name_mapping: dict
-        - agents: list
-        - _agent_selector: AgentSelector
-        - _action_spaces: dict
-        - _observation_spaces: dict
-        - render_mode: str
-        - steps: int
-        - terminations: Dict[str, bool]
-        - truncations: Dict[str, bool]
-        - rewards: Dict[str, float]
-        - _cumulative_rewards: Dict[str, float]
-        - infos: Dict[str, Dict]
-        - agent_selection: str  
-        + __init__(agents, render_mode="human", grid_width=10.0, grid_height=10.0, save_episode_gifs=False, gif_dir="episode_gifs", gif_figsize=(6, 6), max_cycles=100)
-        + observation_space(agent): gym.spaces.Dict
-        + action_space(agent): gym.spaces.Space
-        + observe(agent): dict
-        + reset(seed=None, options=None): Tuple[Dict[str, ndarray], Dict[str, Dict]]
+        + reset()
         + step(action)
+        + observe(agent)
         + render()
-        - _render_text()
-        - _render_matplotlib()
-        - _save_current_episode_gif()
-        + close()
     }
-    AECGameEnv "1" o-- "many" BaseAgent: manages
+    class ParallelGameEnv {
+        + reset()
+        + step(actions)
+        + observe(agent)
+        + render()
+    }
+    AECGameEnv <|-- ACNEnvironmentLogic
+    ParallelGameEnv <|-- ACNEnvironmentLogic
+
+    class ACNEnvironmentLogic {
+        - grid_width: float
+        - grid_height: float
+        - physics_engine: PhysicsEngine
+        - reward_fn: RewardFunction
+        - _observation_builder: ObservationBuilder
+        - save_episode_gifs: bool
+        + _get_observation(agent, step)
+        + _calculate_reward(agent)
+        + _apply_action(agent, action)
+        + _distribute_agents()
+        + _reset_agent_positions()
+        + render()
+    }
+    ACNEnvironmentLogic --> ObservationBuilder
+    ACNEnvironmentLogic --> RewardFunction
+    ACNEnvironmentLogic --> PhysicsEngine
 }
 
-package "main" {
-    class main {
-      + main(config_path)
-      + setup_experiment_results_dir(base_results_dir, experiment_name)
+package "src.env.observation" {
+    class ObservationBuilder {
+        + build(agent_obj, step_count)
+        + _get_base_observation()
+    }
+    class BlueObservationBuilder {
+        + build(agent_obj, step_count)
+    }
+    class RedObservationBuilder {
+        + build(agent_obj, step_count)
+    }
+    class FlockingObservationBuilder {
+        + build(agent_obj, step_count)
+    }
+    note right of FlockingObservationBuilder
+      Factory: create_observation_builder(agent_type, env)
+    end note
+    ObservationBuilder <|-- BlueObservationBuilder
+    ObservationBuilder <|-- RedObservationBuilder
+    RedObservationBuilder <|-- FlockingObservationBuilder
+}
+
+package "src.env.rewards" {
+    class RewardFunction {
+        + __call__(agent_name, agent_obj, env_state)
+    }
+    class AttractorReward {
+        - reward_radius: float
+        - tolerance: float
+        - blue_passive_reward: float
+    }
+    class DistanceReward {
+        - scale: float
+        - max_reward: float
+    }
+    class DetectionReward {
+        - detection_reward: float
+        - undetected_penalty: float
+    }
+    class CompositeReward {
+        - reward_fns: List[RewardFunction]
+        - weights: List[float]
+    }
+    note right of CompositeReward
+      Factory: create_reward_function(config)
+    end note
+    RewardFunction <|-- AttractorReward
+    RewardFunction <|-- DistanceReward
+    RewardFunction <|-- DetectionReward
+    RewardFunction <|-- CompositeReward
+}
+
+package "src.physics" {
+    class PhysicsEngine {
+        - _bodies: Dict
+        - _obstacles: List
+        - _force_fields: List
+        - boundary_mode: BoundaryMode
+        - grid_width: float
+        - grid_height: float
+        + register_body(name, position, **kwargs)
+        + apply_force(name, force)
+        + step(dt)
+        + get_position(name)
+        + get_velocity(name)
+        + set_position(name, position)
+        + add_obstacle(obstacle)
+        + add_force_field(field)
+    }
+    class PhysicsBody {
+        - position: np.ndarray
+        - velocity: np.ndarray
+        - acceleration: np.ndarray
+        - mass: float
+        - max_speed: float
+        - max_force: float
+        - drag_coefficient: float
+        - turning_rate: float
+        - radius: float
+        - restitution: float
+    }
+    class BoundaryMode {
+        + CLAMP
+        + BOUNCE
+        + STOP
+    }
+    PhysicsEngine "1" o-- "*" PhysicsBody
+    PhysicsEngine --> BoundaryMode
+
+    package "obstacles" {
+        abstract class Obstacle {
+            + contains(point)
+            + nearest_point(point)
+            + normal_at(point)
+        }
+        class RectObstacle {
+            - x, y, width, height
+        }
+        class CircleObstacle {
+            - x, y, radius
+        }
+        Obstacle <|-- RectObstacle
+        Obstacle <|-- CircleObstacle
+    }
+
+    package "fields" {
+        abstract class ForceField {
+            + force_at(position)
+        }
+        class AttractorField {
+            - center: np.ndarray
+            - strength: float
+        }
+        class RepulsorField {
+            - center: np.ndarray
+            - radius: float
+            - strength: float
+        }
+        class FlowField {
+            - direction: np.ndarray
+            - strength: float
+        }
+        ForceField <|-- AttractorField
+        ForceField <|-- RepulsorField
+        ForceField <|-- FlowField
     }
 }
 
-package "training" {
-  class Trainer {
-      - env: AECGameEnv
-      - agents: list
-      - config: dict
-      - results_dir: str
-      + __init__(env, agents: list, config: dict, results_dir: str)
-      + _setup_policies()
-      + train()
-      + save_models(episode_num)
-      + load_models(model_dir)
-      + save_results()
-  }
-  Trainer --> AECGameEnv : uses
-  Trainer --> BaseAgent : uses
+package "src.benchmark" {
+    class BenchmarkRunner {
+        - scenarios: List[Scenario]
+        + run()
+        + save_comparison(path)
+    }
+    class Scenario {
+        - name: str
+        - env_config: str
+        - algorithms: List
+        - episodes: int
+        - metrics: List
+    }
+    class MetricsCalculator {
+        + avg_episode_reward(episodes)
+        + detection_rate(episodes)
+        + red_score_rate(episodes)
+        + convergence_speed(episodes)
+        + calculate_metrics(episodes, names)
+    }
+    BenchmarkRunner "1" o-- "*" Scenario
 }
 
-package "utils" {
-  class config_loader {
-      + load_config(config_path)
-  }
+package "src.training" {
+    abstract class BaseTrainer {
+        + train(env, timesteps)
+        + evaluate(env, episodes)
+        + save(path)
+        + load(path)
+    }
+    class Trainer {
+        - algorithm: str
+        - model: Any
+        + train()
+        + evaluate()
+        + save()
+        + load()
+    }
+    BaseTrainer <|-- Trainer
+    Trainer --> ParallelGameEnv
 }
 
-main ..> config_loader : uses
-main ..> AECGameEnv : creates
-main ..> Trainer : creates
+package "src.utils" {
+    class Logger {
+        + get_logger(name)
+        + configure_logging(config)
+    }
+    class GeometryUtils {
+        + calculate_distance(pos1, pos2)
+        + is_within_detection_radius(center, target, radius)
+    }
+    class ExperimentUtils {
+        + setup_experiment_results_dir()
+        + save_prediction_plots()
+        + save_timing_stats()
+    }
+    class ConfigLoader {
+        + load_config(path)
+    }
+    class Tracking {
+        + log_metrics(metrics, step)
+        + log_episode(data)
+        + snapshot_config()
+    }
+    class Regressor {
+        + fit(X, y)
+        + predict(X)
+    }
+}
 
+package "src.communication" {
+    abstract class CommunicationModel {
+        + process_messages()
+        + select_partners()
+    }
+    class NoCommunicationModel {
+    }
+    class GNNCommunicationModel {
+        - model: Any
+    }
+    CommunicationModel <|-- NoCommunicationModel
+    CommunicationModel <|-- GNNCommunicationModel
+}
 
-
+package "root" {
+    class Run {
+        + main(mode, config)
+    }
+    class MainAEC {
+        + main(config_path)
+    }
+    class MainParallel {
+        + main(config_path)
+    }
+    class main
+    MainAEC --> AECGameEnv
+    MainParallel --> ParallelGameEnv
+}
 
 @enduml

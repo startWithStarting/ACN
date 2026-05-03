@@ -66,9 +66,6 @@ class BaseAgent:
         # e.g., self.health, self.current_observation, etc.
         self.is_active = True # Flag to indicate if the agent is currently active in the env
 
-        # Define a default action space (can be overridden by subclasses)
-        self.action_space = spaces.Discrete(2) # Example: Simple discrete space
-
     def get_observation(self, sub_env):
         """
         Returns the agent's current observation of the environment.
@@ -92,20 +89,14 @@ class BaseAgent:
         raise NotImplementedError("choose_action() must be implemented, likely linking to an RL policy.")
     
     def receive_message(self, sender_name: str, message_content: dict):
-        """
-        Handles receiving a message from another agent.
-        """
-        # Placeholder: Logic for processing incoming messages
-        print(f"{self.name} received message from {sender_name}: {message_content}")
-        # Communication logic (potentially using GNNs) would be triggered here.
+        """Handles receiving a message from another agent."""
+        # Placeholder for communication logic
+        pass
 
     def send_message(self, recipient_name: str, message_content: dict):
-        """
-        Sends a message to another agent (likely via the environment).
-        """
-        # Placeholder: Logic for initiating message sending
-        print(f"{self.name} sending message to {recipient_name}: {message_content}")
-        # The environment will likely mediate the actual delivery.
+        """Sends a message to another agent (likely via the environment)."""
+        # Placeholder for communication logic
+        pass
 
     def __str__(self):
         position_str = f", Pos: ({self.x:.2f}, {self.y:.2f})" if self.x is not None and self.y is not None else ""

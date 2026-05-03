@@ -19,15 +19,16 @@ class TestRedAgent(unittest.TestCase):
         self.assertEqual(self.agent.processing_capability, 5)
         self.assertIsInstance(self.agent.action_space, Dict)
         self.assertIsInstance(self.agent.action_space["direction"], Box)
-        self.assertIsInstance(self.agent.action_space["speed"], Discrete)
+        self.assertIsInstance(self.agent.action_space["speed"], Box)
 
         # Check action space boundaries
         direction_space = self.agent.action_space["direction"]
         self.assertTrue(np.array_equal(direction_space.low, np.array([-1.0, -1.0])))
         self.assertTrue(np.array_equal(direction_space.high, np.array([1.0, 1.0])))
         speed_space = self.agent.action_space["speed"]
-        self.assertEqual(speed_space.start, -5)
-        self.assertEqual(speed_space.n, 11)
+        self.assertEqual(speed_space.shape, (1,))
+        self.assertEqual(speed_space.low, np.array([0.0]))
+        self.assertEqual(speed_space.high, np.array([10.0]))
 
     def test_choose_action_no_observation(self):
         action = self.agent.choose_action()

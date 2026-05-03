@@ -1,38 +1,12 @@
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
-def calculate_distance(pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-    """
-    Calculate Euclidean distance between two positions.
+from src.utils.geometry import is_within_detection_radius
+from ..registry import register_strategy
 
-    Args:
-        pos1 (Tuple[float, float]): First position (x, y)
-        pos2 (Tuple[float, float]): Second position (x, y)
 
-    Returns:
-        float: Euclidean distance between the positions
-    """
-    return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-
-def is_within_detection_radius(red_pos: Tuple[float, float], 
-                             blue_pos: Tuple[float, float], 
-                             detection_radius: float) -> bool:
-    """
-    Check if a Blue agent is within the red agent's detection radius.
-
-    Args:
-        red_pos (Tuple[float, float]): Position of the Red agent
-        blue_pos (Tuple[float, float]): Position of the Blue agent
-        detection_radius (float): Detection radius of the Red agent
-
-    Returns:
-        bool: True if the Blue agent is within detection radius, False otherwise
-    """
-    if red_pos is None or blue_pos is None:
-        return False
-    return calculate_distance(red_pos, blue_pos) <= detection_radius
-
-def avoidant_red_strategy(current_pos: Optional[Tuple[float, float]], 
+@register_strategy("avoidant", side="red")
+def avoidant_red_strategy(current_pos: Optional[Tuple[float, float]],
                          grid_center: Optional[Tuple[float, float]],
                          blue_agents: Dict[str, Dict[str, Any]],
                          detection_radius: float = 15.0,
@@ -85,10 +59,10 @@ def avoidant_red_strategy(current_pos: Optional[Tuple[float, float]],
     if distance_to_center < min_distance:
         # Reverse direction if too close to center
         center_direction = -center_direction
-        center_speed = int(5 * (1 + (min_distance - distance_to_center) / min_distance))
+        center_speed = 5.0 * (1 + (min_distance - distance_to_center) / min_distance)
     else:
         # Cap the speed at 5 (the maximum for the action space)
-        center_speed = min(5, int(distance_to_center / 10))
+        center_speed = min(5.0, distance_to_center / 10.0)
 
     # Detect blue agents within detection radius
     detected_blue_agents = []
@@ -133,12 +107,12 @@ def avoidant_red_strategy(current_pos: Optional[Tuple[float, float]],
         combined_direction = combined_direction / combined_magnitude
 
     # Set speed: higher when avoiding blue agents
-    avoidance_speed = min(5, 3 + len(detected_blue_agents))  # More blue agents = higher speed, with max 5
-    
+    avoidance_speed = min(5.0, 3.0 + len(detected_blue_agents))  # More blue agents = higher speed, with max 5
+
     # Final speed is a weighted combination
-    speed = int(center_weight * center_speed + avoidance_weight * avoidance_speed)
-    
+    speed = center_weight * center_speed + avoidance_weight * avoidance_speed
+
     return {
         'direction': combined_direction.astype(np.float32),
-        'speed': speed
+        'speed': np.float32(speed)
     }

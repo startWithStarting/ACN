@@ -22,6 +22,7 @@ dependencies = [
     "stable-baselines3>=2.3.0",
     "supersuit>=3.9.0",
     "tensorboard>=2.15.0",
+    "loguru>=0.7.0",
 ]
 
 [build-system]

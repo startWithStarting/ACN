@@ -1,15 +1,21 @@
 from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 from collections import defaultdict
-from sklearn.linear_model import LinearRegression
+import gymnasium.spaces as spaces
 
 from .base_agent import BaseAgent, AgentType
+from .registry import register_agent
 from ..utils.regressor import VectorAutoRegressor
+from ..utils.geometry import calculate_distance, is_within_detection_radius
+from ..utils.logger import get_logger
 
 # Import blue agent strategies
 from .blue_strategies.static_strategy import static_blue_strategy
 from .blue_strategies.pursuit_strategy import pursuit_blue_strategy
 
+logger = get_logger("acn.agents.blue")
+
+@register_agent("blue")
 class BlueAgent(BaseAgent):
     """
     Represents a Blue agent in the simulation.
@@ -52,55 +58,45 @@ class BlueAgent(BaseAgent):
         # Key: Red agent name, Value: LinearRegression model
         self.prediction_models = {}
         
+        # Define the action space for Blue Agent (matching RedAgent for consistency)
+        self.action_space = spaces.Dict({
+            'direction': spaces.Box(low=np.array([-1.0, -1.0], dtype=np.float32),
+                                    high=np.array([1.0, 1.0], dtype=np.float32),
+                                    shape=(2,), dtype=np.float32),
+            'speed': spaces.Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32)
+        })
+
         # Dictionary to store predicted positions for each red agent
         # Key: Red agent name, Value: List of predicted future positions [(x1, y1), (x2, y2), ...]
         self.predicted_positions = defaultdict(list)
-        
+
         # Dictionaries to store history of actual and predicted positions with timestamps
         # Key: Red agent name, Value: List of (position, timestamp) tuples
         self.actual_position_history = defaultdict(list)
         # Key: Red agent name, Value: List of (predicted_position, timestamp) tuples
         self.prediction_history = defaultdict(list)
-        
+
         # Set the movement strategy type
         self.strategy_type = strategy_type
-        
+
         # Optimization: Prediction interval
         self.prediction_interval = prediction_interval
         self.prediction_timeout = prediction_timeout
         self.observation_window_size = observation_window_size
         self.steps = 0
-        
+
+        # History cap to prevent unbounded memory growth
+        self.max_history_length = 1000
+
         # Movement memory/momentum system
         self.memory_constant = 0.1  # How much to retain from previous path (0-1)
         self.current_target_position = None  # Current target the agent is moving toward
 
-    def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-        """
-        Calculate Euclidean distance between two positions.
-
-        Args:
-            pos1 (Tuple[float, float]): First position (x, y)
-            pos2 (Tuple[float, float]): Second position (x, y)
-
-        Returns:
-            float: Euclidean distance between the positions
-        """
-        return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-
     def is_within_detection_radius(self, red_agent_pos: Tuple[float, float]) -> bool:
-        """
-        Check if a Red agent is within the detection radius.
-
-        Args:
-            red_agent_pos (Tuple[float, float]): Position of the Red agent
-
-        Returns:
-            bool: True if the Red agent is within detection radius, False otherwise
-        """
+        """Check if a Red agent is within the detection radius."""
         if self.x is None or self.y is None:
             return False
-        return self.calculate_distance((self.x, self.y), red_agent_pos) <= self.detection_radius
+        return is_within_detection_radius((self.x, self.y), red_agent_pos, self.detection_radius)
 
     def record_red_agent_movement(self, red_agent_name: str, position: Tuple[float, float], timestamp: float):
         """
@@ -167,14 +163,14 @@ class BlueAgent(BaseAgent):
             y.append(positions_array[i+n])              # shape (2,)
         X = np.array(X)
         y = np.array(y)
-        # print(f'Fitting VAR: X shape {X.shape}, y shape {y.shape}')
+        # Logging handled by logger.warning in the except block
         try:
             model = VectorAutoRegressor(n_lags=n)
             model.fit(X, y)
             self.prediction_models[red_agent_name] = model
             return True
         except Exception as e:
-            print(f"Error fitting prediction model for {red_agent_name}: {e}")
+            logger.warning("Error fitting prediction model for {}: {}", red_agent_name, e)
             return False
             
     def predict_future_position(self, red_agent_name: str, steps_ahead: int = 1, current_time: float = None) -> Optional[Tuple[float, float]]:
@@ -267,7 +263,7 @@ class BlueAgent(BaseAgent):
             
             return (x, y)
         except Exception as e:
-            # print(f"Error in prediction for {red_agent_name}: {e}")
+            # Logging handled by logger.warning in the except block
             last_pos, _ = observations[-1]
             return last_pos
     def choose_action(self, observation=None):
@@ -297,7 +293,9 @@ class BlueAgent(BaseAgent):
                     if self.is_within_detection_radius(position) and not (position[0] == 0 and position[1] == 0):
                         self.record_red_agent_movement(red_name, position, timestamp)
                         self.actual_position_history[red_name].append((position, timestamp))
-                        # print(f"DEBUG: {self.name} detected {red_name} at position {position} at time {timestamp}")
+                        # Trim history if it exceeds the cap
+                        if len(self.actual_position_history[red_name]) > self.max_history_length:
+                            self.actual_position_history[red_name] = self.actual_position_history[red_name][-self.max_history_length:]
             
             # Try to fit/update prediction models for all observed red agents
         # Optimization: Only update predictions every prediction_interval steps
@@ -343,14 +341,13 @@ class BlueAgent(BaseAgent):
                         
                     # Make prediction for the next step (steps_ahead=1)
                     next_step_prediction = self.predict_future_position(red_name, 1, current_time=timestamp)
-                    if self.debug_mode:
-                        print(f"DEBUG: {self.name} prediction for {red_name}: {next_step_prediction}")
-                    
                     if next_step_prediction is not None and not (next_step_prediction[0] == 0 and next_step_prediction[1] == 0):
                         self.prediction_history[red_name].append((next_step_prediction, timestamp))
+                        if len(self.prediction_history[red_name]) > self.max_history_length:
+                            self.prediction_history[red_name] = self.prediction_history[red_name][-self.max_history_length:]
                     else:
                         if self.debug_mode:
-                            print(f"DEBUG: {self.name} prediction invalid or None")
+                            logger.debug("{} prediction invalid or None for {}", self.name, red_name)
                         pass
                         
                     # Store predictions for the next 5 steps (for visualization)

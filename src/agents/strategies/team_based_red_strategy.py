@@ -1,38 +1,12 @@
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
-def calculate_distance(pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-    """
-    Calculate Euclidean distance between two positions.
+from src.utils.geometry import calculate_distance, is_within_detection_radius
+from ..registry import register_strategy
 
-    Args:
-        pos1 (Tuple[float, float]): First position (x, y)
-        pos2 (Tuple[float, float]): Second position (x, y)
 
-    Returns:
-        float: Euclidean distance between the positions
-    """
-    return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-
-def is_within_detection_radius(red_pos: Tuple[float, float], 
-                             other_pos: Tuple[float, float], 
-                             detection_radius: float) -> bool:
-    """
-    Check if another agent is within the red agent's detection radius.
-
-    Args:
-        red_pos (Tuple[float, float]): Position of the Red agent
-        other_pos (Tuple[float, float]): Position of the other agent
-        detection_radius (float): Detection radius of the Red agent
-
-    Returns:
-        bool: True if the other agent is within detection radius, False otherwise
-    """
-    if red_pos is None or other_pos is None:
-        return False
-    return calculate_distance(red_pos, other_pos) <= detection_radius
-
-def team_based_red_strategy(current_pos: Optional[Tuple[float, float]], 
+@register_strategy("team_based", side="red")
+def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
                           grid_center: Optional[Tuple[float, float]],
                           red_teammates: Dict[str, Dict[str, Any]],
                           blue_agents: Dict[str, Dict[str, Any]],
@@ -89,10 +63,10 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
     if distance_to_center < min_distance:
         # Reverse direction if too close to center
         center_direction = -center_direction
-        center_speed = int(5 * (1 + (min_distance - distance_to_center) / min_distance))
+        center_speed = 5.0 * (1 + (min_distance - distance_to_center) / min_distance)
     else:
         # Cap the speed at 5 (the maximum for the action space)
-        center_speed = min(5, int(distance_to_center / 10))
+        center_speed = min(5.0, distance_to_center / 10.0)
 
     # Detect red teammates within detection radius
     detected_teammates = []
@@ -120,7 +94,7 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
         if team_distance > 1e-6:
             team_direction = team_vector / team_distance
             # Speed is higher when teammates are farther
-            team_speed = min(5, int(team_distance / 5) + 2)
+            team_speed = min(5.0, team_distance / 5.0 + 2.0)
         else:
             # No clear direction if at same position as average teammate
             team_weight = 0.0  # No team weight if at same position
@@ -151,7 +125,7 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
             # Vector from blue agent to red agent
             avoid_vector = np.array([current_x - blue_pos[0], current_y - blue_pos[1]], dtype=np.float32)
             avoid_distance = np.linalg.norm(avoid_vector)
-            
+
             # Stronger avoidance for closer blue agents
             if avoid_distance > 1e-6:
                 # Weight inversely proportional to distance
@@ -163,7 +137,7 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
         if avoidance_magnitude > 1e-6:
             avoidance_direction = avoidance_direction / avoidance_magnitude
             # Speed is higher when blue agents are closer
-            avoidance_speed = min(5, 3 + len(detected_blue_agents))
+            avoidance_speed = min(5.0, 3.0 + len(detected_blue_agents))
         else:
             avoidance_weight = 0.0  # No avoidance if no clear direction
             # Distribute the avoidance weight between center and team
@@ -181,10 +155,10 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
         avoidance_weight /= total_weight
 
     # Combine the behaviors with adjusted weights
-    combined_direction = (center_weight * center_direction + 
+    combined_direction = (center_weight * center_direction +
                           team_weight * team_direction +
                           avoidance_weight * avoidance_direction)
-    
+
     # Normalize the combined direction
     combined_magnitude = np.linalg.norm(combined_direction)
     if combined_magnitude > 1e-6:
@@ -195,14 +169,14 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
         combined_direction = random_direction / np.linalg.norm(random_direction)
 
     # Final speed is a weighted combination
-    speed = int(center_weight * center_speed + 
-               team_weight * team_speed + 
-               avoidance_weight * avoidance_speed)
-    
+    speed = center_weight * center_speed +
+               team_weight * team_speed +
+               avoidance_weight * avoidance_speed
+
     # Ensure speed is between 1 and 5
     speed = max(1, min(5, speed))
-    
+
     return {
         'direction': combined_direction.astype(np.float32),
-        'speed': speed
+        'speed': np.float32(speed)
     }

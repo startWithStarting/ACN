@@ -59,8 +59,6 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         
         self._observation_spaces = self._create_observation_spaces()
 
-        self._observation_spaces = self._create_observation_spaces()
-
         # State tracking
         self.steps = 0
         self.terminations = {agent: False for agent in self.possible_agents}

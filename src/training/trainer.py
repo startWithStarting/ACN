@@ -8,8 +8,12 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 import supersuit as ss
 from pettingzoo.utils.env import ParallelEnv
 
+from src.utils.logger import get_logger
+
 # Import the parallel environment
 from src.env.parallel_env import ParallelGameEnv
+
+logger = get_logger("acn.training")
 
 class RedTeamWrapper(ParallelEnv):
     """
@@ -125,8 +129,8 @@ class Trainer:
         # Env config
         self.env_config = config.get("environment", {})
         self.env_config["experiment_results_dir"] = results_dir
-        
-        print(f"Initializing PPO Trainer. Timesteps: {self.total_timesteps}")
+
+        logger.info("Initializing PPO Trainer. Timesteps: {}", self.total_timesteps)
 
     def train(self):
         """
@@ -160,7 +164,7 @@ class Trainer:
         )
         
         # 5. Train
-        print("\nStarting PPO training...")
+        logger.info("Starting PPO training...")
         checkpoint_callback = CheckpointCallback(
             save_freq=10000,
             save_path=os.path.join(self.results_dir, "models"),
@@ -172,7 +176,7 @@ class Trainer:
         # 6. Save final model
         final_path = os.path.join(self.results_dir, "models", "final_model")
         model.save(final_path)
-        print(f"Training finished. Model saved to {final_path}")
+        logger.info("Training finished. Model saved to {}", final_path)
         
         # Close env
         env.close()
@@ -181,47 +185,34 @@ class Trainer:
         """
         Loads a trained model and evaluates it.
         """
-        print(f"Loading model from {model_path} for evaluation...")
+        logger.info("Loading model from {} for evaluation...", model_path)
         model = PPO.load(model_path)
-        
+
         base_env = ParallelGameEnv(agents=self.agents, render_mode="human_pygame", **self.env_config)
         red_env = RedTeamWrapper(base_env)
-        
-        # We process step-by-step for evaluation to render properly
+
         for ep in range(num_episodes):
             obs, info = red_env.reset()
             done = False
             total_reward = 0
-            
+
             while not done:
-                # We need to construct actions for the valid agents
-                # SB3 predict expects observation. 
-                # Since we wrapped with supersuit vectorization during training, the model expects vectorized inputs?
-                # Actually PPO.predict handles unvectorized input if we pass a single observation?
-                # But here we have multiple agents.
-                
-                # Simple Manual Loop for Multi-Agent Inference with Shared Policy:
                 actions = {}
                 for agent_name, agent_obs in obs.items():
-                    # Check if model expects vectorized input. PPO.predict usually handles it.
-                    # But if trained on VecEnv, it might expect batch dim.
-                    # Let's simple-wrap the obs or trust SB3.
-                    action, _states = model.predict(agent_obs, deterministic=True)
+                    action, _ = model.predict(agent_obs, deterministic=True)
                     actions[agent_name] = action
-                
+
                 obs, rewards, terminations, truncations, infos = red_env.step(actions)
-                
-                # Check if all done
-                if not obs: # no agents left
+
+                if not obs:
                     done = True
-                
+
                 total_reward += sum(rewards.values())
-                
-                # termination/truncation check
+
                 if all(terminations.values()) or all(truncations.values()):
                     done = True
-                    
-            print(f"Episode {ep+1} Reward: {total_reward}")
+
+            logger.info("Episode {} Reward: {}", ep + 1, total_reward)
         
         red_env.close()
 

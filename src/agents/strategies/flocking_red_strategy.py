@@ -1,15 +1,9 @@
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
-def calculate_distance(pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-    return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+from src.utils.geometry import calculate_distance, is_within_detection_radius
+from ..registry import register_strategy
 
-def is_within_detection_radius(red_pos: Tuple[float, float], 
-                             other_pos: Tuple[float, float], 
-                             detection_radius: float) -> bool:
-    if red_pos is None or other_pos is None:
-        return False
-    return calculate_distance(red_pos, other_pos) <= detection_radius
 
 def limit_magnitude(vector: np.ndarray, max_val: float) -> np.ndarray:
     """Limit the magnitude of a vector to max_val."""
@@ -18,7 +12,9 @@ def limit_magnitude(vector: np.ndarray, max_val: float) -> np.ndarray:
         return (vector / magnitude) * max_val
     return vector
 
-def flocking_red_strategy(current_pos: Optional[Tuple[float, float]], 
+
+@register_strategy("flocking", side="red")
+def flocking_red_strategy(current_pos: Optional[Tuple[float, float]],
                         grid_center: Optional[Tuple[float, float]],
                         red_teammates: Dict[str, Dict[str, Any]],
                         blue_agents: Dict[str, Dict[str, Any]],

@@ -1,8 +1,12 @@
 import numpy as np
 from typing import Tuple, Dict, Any
 from collections import defaultdict
-from .base_agent import BaseAgent, AgentType, CommsType # Import CommsType if used in __str__
-import gymnasium.spaces as spaces # Import gymnasium spaces
+
+from .base_agent import BaseAgent, AgentType, CommsType
+from .registry import register_agent
+import gymnasium.spaces as spaces
+
+from ..utils.geometry import calculate_distance, is_within_detection_radius
 
 # Import all available strategies
 from .strategies.red_agent_strategy import center_based_movement_strategy
@@ -11,6 +15,7 @@ from .strategies.aggressive_red_strategy import aggressive_red_strategy
 from .strategies.team_based_red_strategy import team_based_red_strategy
 from .strategies.flocking_red_strategy import flocking_red_strategy
 
+@register_agent("red")
 class RedAgent(BaseAgent):
     """
     Represents a Red agent in the simulation.
@@ -89,7 +94,7 @@ class RedAgent(BaseAgent):
                             and 'speed' (integer). Returns default action if info is missing.
         """
         if observation is None:
-            return {'direction': np.array([0.0, 0.0], dtype=np.float32), 'speed': 0}
+            return {'direction': np.array([0.0, 0.0], dtype=np.float32), 'speed': np.float32(0.0)}
 
         current_pos = observation.get('position')
         grid_center = observation.get('grid_center')
@@ -139,38 +144,16 @@ class RedAgent(BaseAgent):
             # For trainable agents, the action is typically provided externally during training (e.g. via step(action)).
             # If choose_action is called (e.g. during inference without a model wrapper), we strictly rely on input.
             # Here we just return a no-op placeholder if forced, but usually the Trainer controls this.
-            return {'direction': np.array([0.0, 0.0], dtype=np.float32), 'speed': 0}
+            return {'direction': np.array([0.0, 0.0], dtype=np.float32), 'speed': np.float32(0.0)}
         else:  # Default to center-based
             return center_based_movement_strategy(current_pos, grid_center)
 
     def is_within_detection_radius(self, current_pos: Tuple[float, float], other_pos: Tuple[float, float]) -> bool:
-        """
-        Check if another agent is within the detection radius.
-        
-        Args:
-            current_pos (Tuple[float, float]): Current position of this agent
-            other_pos (Tuple[float, float]): Position of the other agent
-            
-        Returns:
-            bool: True if the other agent is within detection radius, False otherwise
-        """
+        """Check if another agent is within the detection radius."""
         if current_pos is None or other_pos is None:
             return False
-        return self.calculate_distance(current_pos, other_pos) <= self.detection_radius
-    
-    def calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
-        """
-        Calculate Euclidean distance between two positions.
+        return is_within_detection_radius(current_pos, other_pos, self.detection_radius)
 
-        Args:
-            pos1 (Tuple[float, float]): First position (x, y)
-            pos2 (Tuple[float, float]): Second position (x, y)
-
-        Returns:
-            float: Euclidean distance between the positions
-        """
-        return np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-        
     def __str__(self):
         position_str = f", Pos: ({self.x:.2f}, {self.y:.2f})" if self.x is not None and self.y is not None else ""
         movement_str = f", Speed: {self.speed:.2f}, Dir: {self.direction}" if self.direction is not None else ""

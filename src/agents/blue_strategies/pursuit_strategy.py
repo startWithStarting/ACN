@@ -1,7 +1,11 @@
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 
-def pursuit_blue_strategy(current_pos: np.ndarray, 
+from ...agents.registry import register_strategy
+
+
+@register_strategy("pursuit", side="blue")
+def pursuit_blue_strategy(current_pos: np.ndarray,
                           target_position: Optional[np.ndarray],
                           max_speed: float = 5.0,
                           speed_scale: float = 0.5) -> Dict[str, Any]:
@@ -35,8 +39,8 @@ def pursuit_blue_strategy(current_pos: np.ndarray,
     
     # Set speed proportional to the distance
     speed = min(distance * speed_scale, max_speed)
-    
+
     return {
         'direction': np.array(direction_vector, dtype=np.float32),
-        'speed': float(speed)
+        'speed': np.float32(speed)
     }

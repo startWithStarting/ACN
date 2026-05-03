@@ -91,15 +91,20 @@ class ACNEnvironmentLogic:
 
     def _create_observation_spaces(self):
         """Define observation spaces for all agents."""
+        base = {
+            'position': Box(
+                low=np.array([0.0, 0.0], dtype=np.float32),
+                high=np.array([self.grid_width, self.grid_height], dtype=np.float32),
+                shape=(2,), dtype=np.float32),
+            'grid_center': Box(
+                low=np.array([self.grid_width / 2, self.grid_height / 2], dtype=np.float32),
+                high=np.array([self.grid_width / 2, self.grid_height / 2], dtype=np.float32),
+                shape=(2,), dtype=np.float32),
+            'timestamp': Box(
+                low=0.0, high=np.finfo(np.float32).max, shape=(), dtype=np.float32),
+        }
         return {
-            name: GymDict({
-                'position': Box(low=np.array([0.0, 0.0], dtype=np.float32),
-                                high=np.array([self.grid_width, self.grid_height], dtype=np.float32),
-                                shape=(2,), dtype=np.float32),
-                'grid_center': Box(low=np.array([self.grid_width / 2, self.grid_height / 2], dtype=np.float32),
-                                   high=np.array([self.grid_width / 2, self.grid_height / 2], dtype=np.float32),
-                                   shape=(2,), dtype=np.float32)
-            })
+            name: GymDict(base)
             for name in self.possible_agents
         }
 

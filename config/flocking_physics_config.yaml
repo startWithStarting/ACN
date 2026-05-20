@@ -1,0 +1,80 @@
+# Flocking Strategy Configuration tuned for physics-based motion
+
+experiment_name: "flocking_physics_strategy"
+results_base_dir: "results"
+
+agents:
+  blue_agents:
+    - count: 5
+      communication_bandwidth: 15
+      processing_capability: 2
+      detection_radius: 100.0
+      strategy_type: "pursuit"
+      prediction_interval: 10
+      physics:
+        radius: 2.5
+        max_speed: 4.5
+        drag: 0.18
+
+  red_agents:
+    - count: 30
+      communication_bandwidth: 5
+      processing_capability: 3
+      detection_radius: 200.0
+      strategy_type: "flocking"
+      cohesion_weight: 15.0
+      alignment_weight: 15.0
+      separation_weight: 15.0
+      separation_radius: 15.0
+      max_speed: 5.0
+      min_speed: 2.0
+      max_force: 0.2
+      wall_avoidance_weight: 5.0
+      wall_detection_radius: 200.0
+      physics:
+        radius: 2.2
+        max_speed: 5.0
+        max_force: 2.5
+        drag: 0.22
+        restitution: 0.15
+
+environment:
+  width: 300
+  height: 300
+  render_mode: "human_pygame"
+  save_episode_gifs: true
+  max_cycles: 1550
+  physics:
+    enabled: true
+    control_mode: "force"
+    dt: 1.0
+    boundary_mode: "bounce"
+    enable_collisions: true
+    enable_obstacles: false
+    default_mass: 1.0
+    default_drag: 0.18
+    default_max_speed: 5.0
+    default_max_force: 2.5
+    default_radius: 2.2
+    default_restitution: 0.15
+    red:
+      radius: 2.2
+      max_speed: 5.0
+      max_force: 2.5
+      drag: 0.22
+    blue:
+      radius: 2.5
+      max_speed: 4.5
+      max_force: 2.0
+      drag: 0.18
+
+analysis:
+  trace:
+    enabled: true
+  plots:
+    generate_after_run: false
+
+training:
+  algorithm: "PPO"
+  num_episodes: 1
+  learning_rate: 0.0003

@@ -6,13 +6,12 @@ This module provides experiment tracking with support for multiple backends:
 - MLflowTracker: MLflow (lazy import)
 - CompositeTracker: Delegate to multiple trackers
 
-Usage:
-    # Create tracker from config
-    tracker = create_tracker(config.get("tracking", []), results_dir)
+Example:
+    Create and use a tracker::
 
-    # Use in training loop
-    tracker.log_episode(episode_data)
-    tracker.finish()
+        tracker = create_tracker(config.get("tracking", []), results_dir)
+        tracker.log_episode(episode_data)
+        tracker.finish()
 """
 
 import os
@@ -210,11 +209,8 @@ def create_tracker(config: List[Dict[str, Any]], results_dir: str) -> Experiment
     Factory function to create trackers from config.
 
     Args:
-        config: List of tracker configs, e.g.:
-            [
-                {"type": "local"},
-                {"type": "wandb", "project": "acn-experiments"}
-            ]
+        config: List of tracker configs, for example
+            ``[{"type": "local"}, {"type": "wandb", "project": "acn-experiments"}]``.
         results_dir: Directory for local outputs
 
     Returns:

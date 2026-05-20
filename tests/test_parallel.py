@@ -66,6 +66,92 @@ class TestEnvironments(unittest.TestCase):
         env.close()
         print("Parallel Environment run successful.")
 
+    def test_parallel_env_uses_physics_engine(self):
+        """Test that parallel movement is synchronized through PhysicsEngine."""
+        env_config = dict(self.env_config)
+        env_config["physics"] = {
+            "enabled": True,
+            "control_mode": "velocity",
+            "default_radius": 0.0,
+            "enable_collisions": False,
+        }
+        env = ParallelGameEnv(self.agents, **env_config)
+        env.reset(seed=1)
+
+        env.agent_objects["red_0"].x = 10.0
+        env.agent_objects["red_0"].y = 10.0
+        env.agent_objects["blue_0"].x = 50.0
+        env.agent_objects["blue_0"].y = 50.0
+        env._init_physics_engine()
+
+        actions = {
+            "blue_0": {"direction": (0, 0), "speed": 0.0},
+            "red_0": {"direction": (1, 0), "speed": 2.0},
+        }
+        env.step(actions)
+
+        self.assertIsNotNone(env.physics_engine)
+        self.assertAlmostEqual(env.agent_objects["red_0"].x, 12.0)
+        np.testing.assert_array_almost_equal(env.physics_engine.get_position("red_0"), [12.0, 10.0])
+
+        env.close()
+
+    def test_parallel_env_force_mode_preserves_inertia(self):
+        """Test force-mode controls preserve velocity between physics steps."""
+        env_config = dict(self.env_config)
+        env_config["physics"] = {
+            "enabled": True,
+            "control_mode": "force",
+            "default_radius": 0.0,
+            "default_max_force": 10.0,
+            "enable_collisions": False,
+        }
+        env = ParallelGameEnv(self.agents, **env_config)
+        env.reset(seed=1)
+
+        env.agent_objects["red_0"].x = 10.0
+        env.agent_objects["red_0"].y = 10.0
+        env.agent_objects["blue_0"].x = 50.0
+        env.agent_objects["blue_0"].y = 50.0
+        env._init_physics_engine()
+
+        env.step({
+            "blue_0": {"direction": (0, 0), "speed": 0.0},
+            "red_0": {"direction": (1, 0), "speed": 1.0},
+        })
+        self.assertAlmostEqual(env.agent_objects["red_0"].x, 11.0)
+
+        env.step({
+            "blue_0": {"direction": (0, 0), "speed": 0.0},
+            "red_0": {"direction": (0, 0), "speed": 0.0},
+        })
+        self.assertAlmostEqual(env.agent_objects["red_0"].x, 12.0)
+
+        env.close()
+
+    def test_observations_are_detection_limited(self):
+        """Test that observations expose only agents within detection radius."""
+        blue = BlueAgent("blue_0", 10, 10, detection_radius=10.0, strategy_type="pursuit")
+        red_near = RedAgent("red_0", 10, 10, detection_radius=10.0, strategy_type="center")
+        red_far = RedAgent("red_1", 10, 10, detection_radius=10.0, strategy_type="center")
+        env = ParallelGameEnv([blue, red_near, red_far], **self.env_config)
+        env.reset(seed=1)
+
+        env.agent_objects["blue_0"].x = 0.0
+        env.agent_objects["blue_0"].y = 0.0
+        env.agent_objects["red_0"].x = 3.0
+        env.agent_objects["red_0"].y = 4.0
+        env.agent_objects["red_1"].x = 50.0
+        env.agent_objects["red_1"].y = 50.0
+        env._update_active_agents()
+
+        observation = env._get_observation("blue_0", step_count=0)
+        self.assertIn("red_0", observation["red_agents"])
+        self.assertNotIn("red_1", observation["red_agents"])
+        self.assertAlmostEqual(observation["red_agents"]["red_0"]["distance"], 5.0)
+
+        env.close()
+
     def test_parallel_api_conformance(self):
         """Test PettingZoo Parallel API conformance."""
         print("\nTesting Parallel API Conformance...")

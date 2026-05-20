@@ -1,0 +1,66 @@
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: name-tests-test
+        args: [--pytest-test-first]
+        files: ^tests/
+
+  - repo: local
+    hooks:
+      - id: pyupgrade
+        name: pyupgrade
+        entry: uv run pyupgrade --py39-plus
+        language: system
+        types: [python]
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types_or: [python, pyi]
+
+      - id: detect-secrets
+        name: detect secrets
+        entry: uv run detect-secrets-hook
+        language: system
+        types: [text]
+        exclude: ^(uv\.lock|UMLdiagram\.svg)$
+
+      - id: codespell
+        name: codespell
+        entry: uv run codespell
+        language: system
+        args: [--ignore-words-list=acn]
+        types: [text]
+        exclude: ^(uv\.lock|UMLdiagram\.svg)$
+
+      - id: mdformat
+        name: mdformat
+        entry: uv run mdformat
+        language: system
+        types: [markdown]

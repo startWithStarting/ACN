@@ -34,13 +34,13 @@ class TestPhysicsEngine(unittest.TestCase):
         """Test that Euler integration works."""
         self.engine.register_body(
             "agent1",
-            position=np.array([0.0, 0.0]),
+            position=np.array([0.0, 1.0]),
             velocity=np.array([1.0, 0.0]),
         )
         self.engine.step(dt=1.0)
 
         pos = self.engine.get_position("agent1")
-        np.testing.assert_array_almost_equal(pos, [1.0, 0.0])
+        np.testing.assert_array_almost_equal(pos, [1.0, 1.0])
 
     def test_drag(self):
         """Test that drag works."""
@@ -57,7 +57,7 @@ class TestPhysicsEngine(unittest.TestCase):
         engine.step(dt=1.0)
 
         # Velocity should decrease due to drag
-        vel = self.engine.get_velocity("agent1")
+        vel = engine.get_velocity("agent1")
         self.assertLess(vel[0], 10.0)
 
     def test_boundary_clamp(self):
@@ -94,26 +94,61 @@ class TestPhysicsEngine(unittest.TestCase):
         """Test rigid-body collision."""
         self.engine.register_body(
             "agent1",
-            position=np.array([0.0, 0.0]),
-            velocity=np.array([10.0, 0.0]),
+            position=np.array([10.0, 10.0]),
+            velocity=np.array([1.0, 0.0]),
             radius=1.0,
             mass=1.0,
         )
         self.engine.register_body(
             "agent2",
-            position=np.array([2.0, 0.0]),
+            position=np.array([11.5, 10.0]),
             velocity=np.array([0.0, 0.0]),
             radius=1.0,
             mass=1.0,
         )
-        self.engine.step(dt=1.0)
+        self.engine.step(dt=0.1)
 
         # Agents should have collided and changed velocities
         vel1 = self.engine.get_velocity("agent1")
         vel2 = self.engine.get_velocity("agent2")
 
         # Both should have non-zero velocity after collision
-        self.assertFalse(np.allclose(vel1, [10.0, 0.0]))
+        self.assertFalse(np.allclose(vel1, [1.0, 0.0]))
+
+    def test_rect_obstacle_collision(self):
+        """Test collision response against a rectangular obstacle."""
+        self.engine.add_obstacle(RectObstacle(x=20, y=20, width=10, height=10))
+        self.engine.register_body(
+            "agent1",
+            position=np.array([19.0, 25.0]),
+            velocity=np.array([2.0, 0.0]),
+            radius=1.0,
+            mass=1.0,
+        )
+        self.engine.step(dt=1.0)
+
+        pos = self.engine.get_position("agent1")
+        vel = self.engine.get_velocity("agent1")
+
+        self.assertLessEqual(pos[0], 19.0)
+        self.assertLess(vel[0], 0.0)
+
+    def test_circle_obstacle_collision(self):
+        """Test collision response against a circular obstacle."""
+        self.engine.add_obstacle(CircleObstacle(x=25, y=25, radius=2.0))
+        self.engine.register_body(
+            "agent1",
+            position=np.array([20.0, 25.0]),
+            velocity=np.array([4.0, 0.0]),
+            radius=1.0,
+            mass=1.0,
+        )
+        self.engine.step(dt=1.0)
+
+        pos = self.engine.get_position("agent1")
+        distance = np.linalg.norm(pos - np.array([25.0, 25.0]))
+
+        self.assertGreaterEqual(distance, 3.0)
 
 
 class TestObstacles(unittest.TestCase):

@@ -26,7 +26,7 @@ def pursuit_blue_strategy(current_pos: np.ndarray,
     if target_position is None:
         return {
             'direction': np.array([0.0, 0.0], dtype=np.float32),
-            'speed': 0
+            'speed': np.array([0.0], dtype=np.float32)
         }
     
     # Calculate direction vector from current position to target position
@@ -42,5 +42,5 @@ def pursuit_blue_strategy(current_pos: np.ndarray,
 
     return {
         'direction': np.array(direction_vector, dtype=np.float32),
-        'speed': np.float32(speed)
+        'speed': np.array([speed], dtype=np.float32)
     }

@@ -135,11 +135,15 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         
         red_scored_this_step = False
         
-        # 1. Apply movements for all agents
+        # 1. Apply movement controls for all agents, then advance physics once.
+        if self.use_physics:
+            self._begin_physics_step()
         for agent_name, action in actions.items():
             if agent_name in self.agent_objects:
                 agent_obj = self.agent_objects[agent_name]
-                self._apply_action(agent_obj, action)
+                self._apply_action(agent_obj, action, advance_physics=False)
+        if self.use_physics:
+            self._advance_physics()
         
         # 2. Calculate rewards (after all have moved)
         for agent_name in self.agents:

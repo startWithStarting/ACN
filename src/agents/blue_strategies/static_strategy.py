@@ -14,5 +14,5 @@ def static_blue_strategy() -> Dict[str, Any]:
     """
     return {
         'direction': np.array([0.0, 0.0], dtype=np.float32),
-        'speed': np.float32(0.0)
+        'speed': np.array([0.0], dtype=np.float32)
     }

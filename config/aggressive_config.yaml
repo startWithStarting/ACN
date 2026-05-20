@@ -34,6 +34,12 @@ environment:
   env_param_1: "value1" # Existing example parameter
   max_cycles: 50 # Max cycles for the simulation loop in main.py
 
+analysis:
+  trace:
+    enabled: true
+  plots:
+    generate_after_run: false
+
 training:
   # Training-specific parameters
   # For example: learning_rate, batch_size, num_episodes, algorithm, etc.

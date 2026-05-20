@@ -38,6 +38,12 @@ environment:
   save_episode_gifs: True
   max_cycles: 1550 # Increase the number of cycles to observe more complex behaviors
 
+analysis:
+  trace:
+    enabled: true
+  plots:
+    generate_after_run: false
+
 training:
   # Training-specific parameters
   algorithm: "PPO" # Example

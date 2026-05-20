@@ -6,6 +6,7 @@ This module provides an intermediate-level physics simulation with:
 - Turning rate limits
 - Boundary modes (clamp, bounce, stop)
 - Rigid-body collisions with mass and restitution
+- Static obstacle collision response
 
 Usage:
     engine = PhysicsEngine(grid_width=100, grid_height=100)
@@ -65,6 +66,8 @@ class PhysicsEngine:
         default_turning_rate: float = float('inf'),
         default_radius: float = 0.5,
         default_restitution: float = 0.8,
+        enable_collisions: bool = True,
+        enable_obstacles: bool = True,
     ):
         self.grid_width = grid_width
         self.grid_height = grid_height
@@ -76,6 +79,8 @@ class PhysicsEngine:
         self.default_turning_rate = default_turning_rate
         self.default_radius = default_radius
         self.default_restitution = default_restitution
+        self.enable_collisions = enable_collisions
+        self.enable_obstacles = enable_obstacles
 
         self._bodies: Dict[str, PhysicsBody] = {}
         self._obstacles = []
@@ -145,7 +150,10 @@ class PhysicsEngine:
             self._update_body(body, dt)
 
         # Resolve collisions
-        self._resolve_collisions()
+        if self.enable_obstacles:
+            self._resolve_obstacle_collisions()
+        if self.enable_collisions:
+            self._resolve_collisions()
 
     def _update_body(self, body: PhysicsBody, dt: float) -> None:
         """Update a single body's physics."""
@@ -153,9 +161,8 @@ class PhysicsEngine:
         if body.drag_coefficient > 0:
             body.acceleration -= body.drag_coefficient * body.velocity
 
-        # Euler integration: v += a * dt, p += v * dt
+        # Euler integration: v += a * dt, then clamp before p += v * dt.
         body.velocity += body.acceleration * dt
-        body.position += body.velocity * dt
 
         # Apply turning rate limit (heading change)
         if body.turning_rate < float('inf'):
@@ -168,6 +175,8 @@ class PhysicsEngine:
         speed = np.linalg.norm(body.velocity)
         if speed > body.max_speed and speed > 1e-6:
             body.velocity = (body.velocity / speed) * body.max_speed
+
+        body.position += body.velocity * dt
 
         # Handle boundaries
         self._handle_boundaries(body)
@@ -258,6 +267,114 @@ class PhysicsEngine:
             impulse = j * normal
             a.velocity -= impulse / a.mass
             b.velocity += impulse / b.mass
+
+    def _resolve_obstacle_collisions(self) -> None:
+        """Resolve collisions between bodies and static obstacles."""
+        for body in self._bodies.values():
+            for obstacle in self._obstacles:
+                self._resolve_body_obstacle_collision(body, obstacle)
+
+    def _resolve_body_obstacle_collision(self, body: PhysicsBody, obstacle) -> None:
+        """Resolve collision between a circular body and a static obstacle."""
+        if hasattr(obstacle, "center") and hasattr(obstacle, "radius"):
+            self._resolve_circle_obstacle_collision(body, obstacle)
+        elif all(hasattr(obstacle, attr) for attr in ("left", "right", "top", "bottom")):
+            self._resolve_rect_obstacle_collision(body, obstacle)
+        else:
+            self._resolve_generic_obstacle_collision(body, obstacle)
+
+    def _resolve_circle_obstacle_collision(self, body: PhysicsBody, obstacle) -> None:
+        """Resolve collision between a circular body and circular obstacle."""
+        delta = body.position - obstacle.center
+        distance = np.linalg.norm(delta)
+        min_dist = body.radius + obstacle.radius
+
+        if distance >= min_dist:
+            return
+
+        if distance > 1e-6:
+            normal = delta / distance
+        else:
+            normal = np.array([1.0, 0.0], dtype=np.float32)
+
+        body.position = obstacle.center + normal * min_dist
+        self._reflect_body_velocity(body, normal, getattr(obstacle, "restitution", 0.8))
+
+    def _resolve_rect_obstacle_collision(self, body: PhysicsBody, obstacle) -> None:
+        """Resolve collision between a circular body and axis-aligned rectangle."""
+        pos = body.position
+        nearest = np.array(
+            [
+                np.clip(pos[0], obstacle.left, obstacle.right),
+                np.clip(pos[1], obstacle.top, obstacle.bottom),
+            ],
+            dtype=np.float32,
+        )
+        delta = pos - nearest
+        distance = np.linalg.norm(delta)
+
+        if obstacle.contains(pos):
+            distances = {
+                "left": pos[0] - obstacle.left,
+                "right": obstacle.right - pos[0],
+                "top": pos[1] - obstacle.top,
+                "bottom": obstacle.bottom - pos[1],
+            }
+            face = min(distances, key=distances.get)
+            if face == "left":
+                normal = np.array([-1.0, 0.0], dtype=np.float32)
+            elif face == "right":
+                normal = np.array([1.0, 0.0], dtype=np.float32)
+            elif face == "top":
+                normal = np.array([0.0, -1.0], dtype=np.float32)
+            else:
+                normal = np.array([0.0, 1.0], dtype=np.float32)
+
+            body.position += normal * (distances[face] + body.radius)
+            self._reflect_body_velocity(body, normal, getattr(obstacle, "restitution", 0.8))
+            return
+
+        if distance >= body.radius:
+            return
+
+        if distance > 1e-6:
+            normal = delta / distance
+        else:
+            normal = obstacle.normal_at(pos)
+
+        body.position = nearest + normal * body.radius
+        self._reflect_body_velocity(body, normal, getattr(obstacle, "restitution", 0.8))
+
+    def _resolve_generic_obstacle_collision(self, body: PhysicsBody, obstacle) -> None:
+        """Resolve collision for obstacles that only implement the obstacle interface."""
+        nearest = obstacle.nearest_point(body.position)
+        delta = body.position - nearest
+        distance = np.linalg.norm(delta)
+
+        if not obstacle.contains(body.position) and distance >= body.radius:
+            return
+
+        if distance > 1e-6:
+            normal = delta / distance
+        else:
+            normal = obstacle.normal_at(body.position)
+
+        body.position = nearest + normal * body.radius
+        self._reflect_body_velocity(body, normal, getattr(obstacle, "restitution", 0.8))
+
+    def _reflect_body_velocity(
+        self,
+        body: PhysicsBody,
+        normal: np.ndarray,
+        obstacle_restitution: float,
+    ) -> None:
+        """Reflect the inward velocity component against a static surface."""
+        vel_along_normal = np.dot(body.velocity, normal)
+        if vel_along_normal >= 0:
+            return
+
+        restitution = min(body.restitution, obstacle_restitution)
+        body.velocity -= (1 + restitution) * vel_along_normal * normal
 
     def get_position(self, name: str) -> Optional[np.ndarray]:
         """Get the position of a body."""

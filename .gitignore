@@ -69,6 +69,10 @@ ipython_config.py
 # ---------------------------------------------------------------------------
 # Per-run outputs: plots, gifs, timing stats, coordinate JSONs
 results/
+# Sphinx documentation build output
+docs/_build/
+# Local research planning notes
+docs/technical_gap_analysis.md
 # Loguru output (src/utils/logger.py writes here)
 logs/
 *.log

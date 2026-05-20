@@ -1,6 +1,7 @@
 """Shared experiment utilities for setup, plotting, and result export."""
 
 import os
+import uuid
 from datetime import datetime
 
 import matplotlib.pyplot as plt
@@ -11,10 +12,50 @@ from src.utils.logger import get_logger
 logger = get_logger("acn.utils.experiment")
 
 
-def setup_experiment_results_dir(base_results_dir, experiment_name, config_path, mode_suffix=""):
-    """Creates the timestamped results directory for an experiment run."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+def get_analysis_config(config):
+    """Return normalized analysis config with conservative defaults."""
+    analysis_config = config.get("analysis", {}) if config else {}
+    trace_config = analysis_config.get("trace", {})
+    plots_config = analysis_config.get("plots", {})
+    return {
+        "trace": {
+            "enabled": trace_config.get("enabled", True),
+        },
+        "plots": {
+            "generate_after_run": plots_config.get("generate_after_run", False),
+        },
+    }
 
+
+def should_record_trace(config):
+    """Return whether local run trace data should be written."""
+    return bool(get_analysis_config(config)["trace"]["enabled"])
+
+
+def should_generate_prediction_plots(config):
+    """Return whether expensive per-blue/per-red plots should run after simulation."""
+    return bool(get_analysis_config(config)["plots"]["generate_after_run"])
+
+
+def build_file_run_id(experiment_name, mode_suffix=""):
+    """Create a timestamped run id for local file-backed runs."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{experiment_name}_{timestamp}{mode_suffix}"
+
+
+def build_persisted_run_id():
+    """Create a UUID run id for DB-backed persisted runs."""
+    return str(uuid.uuid4())
+
+
+def setup_experiment_results_dir(
+    base_results_dir,
+    experiment_name,
+    config_path,
+    mode_suffix="",
+    run_id=None,
+):
+    """Creates the results directory for a local file-backed experiment run."""
     subfolder = "default"
     if config_path:
         filename = os.path.basename(config_path)
@@ -24,7 +65,7 @@ def setup_experiment_results_dir(base_results_dir, experiment_name, config_path,
         else:
             subfolder = base_name
 
-    dirname = f"{experiment_name}_{timestamp}{mode_suffix}"
+    dirname = run_id or build_file_run_id(experiment_name, mode_suffix)
     results_dir = os.path.join(base_results_dir, subfolder, dirname)
     plots_dir = os.path.join(results_dir, "plots")
     os.makedirs(plots_dir, exist_ok=True)

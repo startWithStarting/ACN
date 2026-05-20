@@ -5,12 +5,14 @@ This module provides obstacle types for the physics engine:
 - RectObstacle (axis-aligned rectangle)
 - CircleObstacle (circular obstacle)
 
-Usage:
-    obstacle = RectObstacle(x=40, y=30, width=10, height=20)
-    if obstacle.contains(point):
-        ...
-    nearest = obstacle.nearest_point(point)
-    normal = obstacle.normal_at(point)
+Example:
+    Use an obstacle directly::
+
+        obstacle = RectObstacle(x=40, y=30, width=10, height=20)
+        if obstacle.contains(point):
+            ...
+        nearest = obstacle.nearest_point(point)
+        normal = obstacle.normal_at(point)
 """
 
 from abc import ABC, abstractmethod

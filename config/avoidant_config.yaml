@@ -30,6 +30,12 @@ environment:
   max_cycles: 150 # Max cycles for the simulation loop in main.py
   debug_mode: False # Enable verbose logging and JSON position recording
 
+analysis:
+  trace:
+    enabled: true
+  plots:
+    generate_after_run: false
+
 training:
   # Training-specific parameters
   # For example: learning_rate, batch_size, num_episodes, algorithm, etc.

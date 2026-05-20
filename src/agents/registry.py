@@ -3,22 +3,23 @@
 This module provides a decorator-based registration system that allows
 adding new agent types and strategies without modifying existing code.
 
-Usage:
-    # Register a new agent type
-    @register_agent("my_agent")
-    class MyAgent(BaseAgent):
-        ...
+Example:
+    Register a new agent type::
 
-    # Register a new strategy
-    @register_strategy("my_strategy", side="red")
-    def my_strategy(agent, env_state):
-        ...
+        @register_agent("my_agent")
+        class MyAgent(BaseAgent):
+            ...
 
-    # Create an agent by type name
-    agent = create_agent("my_agent", name="test", ...)
+    Register a new strategy::
 
-    # Get a strategy by name and side
-    strategy_fn = get_strategy("my_strategy", side="red")
+        @register_strategy("my_strategy", side="red")
+        def my_strategy(agent, env_state):
+            ...
+
+    Create registered objects::
+
+        agent = create_agent("my_agent", name="test", ...)
+        strategy_fn = get_strategy("my_strategy", side="red")
 """
 
 from typing import Callable, Dict, Optional, Type, Any
@@ -44,9 +45,11 @@ def register_agent(agent_type: str) -> Callable[[Type[BaseAgent]], Type[BaseAgen
         A decorator function that registers the class and returns it unchanged.
 
     Example:
-        @register_agent("pursuer")
-        class PursuerAgent(BaseAgent):
-            ...
+        Register a pursuer agent::
+
+            @register_agent("pursuer")
+            class PursuerAgent(BaseAgent):
+                ...
     """
     def decorator(cls: Type[BaseAgent]) -> Type[BaseAgent]:
         if agent_type in _AGENT_REGISTRY:
@@ -69,9 +72,11 @@ def register_strategy(name: str, side: str) -> Callable[[Callable], Callable]:
         A decorator function that registers the function and returns it unchanged.
 
     Example:
-        @register_strategy("aggressive", side="red")
-        def aggressive_strategy(agent, env_state):
-            ...
+        Register an aggressive red strategy::
+
+            @register_strategy("aggressive", side="red")
+            def aggressive_strategy(agent, env_state):
+                ...
     """
     if side not in ("red", "blue"):
         raise ValueError(f"Invalid side: {side}. Must be 'red' or 'blue'.")

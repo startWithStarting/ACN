@@ -16,6 +16,7 @@ import argparse
 import os
 import sys
 import warnings
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,25 +27,25 @@ from src.utils.logger import get_logger, configure_logging
 logger = get_logger("acn.run")
 
 
-def run_aec(config_path: str) -> None:
+def run_aec(config_path: str, persist: bool = False, database_url: Optional[str] = None) -> None:
     """Run AEC (alternating turn) environment simulation."""
     import main as aec_module
     logger.info("Running AEC mode with config: {}", config_path)
-    aec_module.main(config_path)
+    aec_module.main(config_path, persist=persist, database_url=database_url)
 
 
-def run_parallel(config_path: str) -> None:
+def run_parallel(config_path: str, persist: bool = False, database_url: Optional[str] = None) -> None:
     """Run parallel environment simulation."""
     import main_parallel as parallel_module
     logger.info("Running parallel mode with config: {}", config_path)
-    parallel_module.main(config_path)
+    parallel_module.main(config_path, persist=persist, database_url=database_url)
 
 
-def run_train(config_path: str) -> None:
+def run_train(config_path: str, persist: bool = False, database_url: Optional[str] = None) -> None:
     """Run training mode with PPO."""
     import main as aec_module
     logger.info("Running training mode with config: {}", config_path)
-    aec_module.main(config_path, train_mode=True)
+    aec_module.main(config_path, train_mode=True, persist=persist, database_url=database_url)
 
 
 def main():
@@ -73,6 +74,16 @@ def main():
         default="WARNING",
         help="Console logging level."
     )
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Persist run history directly to Postgres instead of writing JSON trace files."
+    )
+    parser.add_argument(
+        "--database-url",
+        default=os.getenv("ACN_DATABASE_URL"),
+        help="Postgres URL for --persist. Defaults to ACN_DATABASE_URL."
+    )
 
     args = parser.parse_args()
 
@@ -86,11 +97,11 @@ def main():
 
     # Dispatch to the appropriate runner
     if args.mode == "aec":
-        run_aec(args.config)
+        run_aec(args.config, persist=args.persist, database_url=args.database_url)
     elif args.mode == "parallel":
-        run_parallel(args.config)
+        run_parallel(args.config, persist=args.persist, database_url=args.database_url)
     elif args.mode == "train":
-        run_train(args.config)
+        run_train(args.config, persist=args.persist, database_url=args.database_url)
     else:
         logger.error("Unknown mode: {}", args.mode)
         sys.exit(1)

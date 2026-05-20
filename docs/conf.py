@@ -13,13 +13,19 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
+    'myst_parser',
 ]
 
+source_suffix = {
+    '.md': 'markdown',
+}
+
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'technical_gap_analysis.md', 'Thumbs.db', '.DS_Store']
+suppress_warnings = ['toc.not_included']
 
 html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static']
+html_static_path = []
 
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),

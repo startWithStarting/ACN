@@ -7,6 +7,11 @@ import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 from gymnasium.spaces import Box, Dict as GymDict
 
+from src.physics.engine import PhysicsEngine
+from src.physics.fields import create_force_field
+from src.physics.obstacles import create_obstacle
+from src.utils.geometry import calculate_distance
+
 # Constants
 DEFAULT_GRID_HEIGHT = 80
 DEFAULT_GRID_WIDTH = 100
@@ -73,6 +78,18 @@ class ACNEnvironmentLogic:
         self.blue_team_scores = []
         self.step_counts = []
 
+        # --- Physics Configuration ---
+        raw_physics_config = self.env_config.get("physics", {})
+        if isinstance(raw_physics_config, bool):
+            raw_physics_config = {"enabled": raw_physics_config}
+        elif raw_physics_config is None:
+            raw_physics_config = {}
+        self.physics_config = raw_physics_config
+        self.use_physics = self.physics_config.get("enabled", True)
+        self.physics_control_mode = self.physics_config.get("control_mode", "velocity")
+        self.physics_dt = float(self.physics_config.get("dt", 1.0))
+        self.physics_engine = None
+
     def _distribute_agents(self):
         """Categorize agents into red and blue lists."""
         self.red_agents = []
@@ -134,6 +151,10 @@ class ACNEnvironmentLogic:
             
             agent_obj.x = x
             agent_obj.y = y
+            agent_obj.speed = 0.0
+            agent_obj.direction = (0.0, 0.0)
+
+        self._init_physics_engine()
 
     def _update_active_agents(self):
         """Update the lists of active red and blue agents."""
@@ -171,26 +192,27 @@ class ACNEnvironmentLogic:
         if hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'blue':
             red_agents_info = {}
             for red_agent in self.active_red_agents:
-                if (hasattr(red_agent, 'x') and hasattr(red_agent, 'y') and 
-                    red_agent.x is not None and red_agent.y is not None):
-                    red_agents_info[red_agent.name] = {'position': (red_agent.x, red_agent.y)}
+                visible_info = self._visible_agent_info(agent_obj, red_agent)
+                if visible_info is not None:
+                    red_agents_info[red_agent.name] = visible_info
             observation['red_agents'] = red_agents_info
         
         # If agent is a RedAgent, add blue_agents info and red_teammates info
         elif hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'red':
             blue_agents_info = {}
             for blue_agent in self.active_blue_agents:
-                if (hasattr(blue_agent, 'x') and hasattr(blue_agent, 'y') and 
-                    blue_agent.x is not None and blue_agent.y is not None):
-                    blue_agents_info[blue_agent.name] = {'position': (blue_agent.x, blue_agent.y)}
+                visible_info = self._visible_agent_info(agent_obj, blue_agent)
+                if visible_info is not None:
+                    blue_agents_info[blue_agent.name] = visible_info
             observation['blue_agents'] = blue_agents_info
             
             red_teammates_info = {}
             for red_agent in self.active_red_agents:
-                if (red_agent.name != agent_name and
-                    hasattr(red_agent, 'x') and hasattr(red_agent, 'y') and
-                    red_agent.x is not None and red_agent.y is not None):
-                    red_teammates_info[red_agent.name] = {'position': (red_agent.x, red_agent.y)}
+                if red_agent.name == agent_name:
+                    continue
+                visible_info = self._visible_agent_info(agent_obj, red_agent)
+                if visible_info is not None:
+                    red_teammates_info[red_agent.name] = visible_info
             observation['red_teammates'] = red_teammates_info
         
         # Flocking parameters
@@ -210,6 +232,32 @@ class ACNEnvironmentLogic:
                 observation['current_speed'] = agent_obj.speed
 
         return observation
+
+    def _visible_agent_info(self, observer_obj, target_obj):
+        """Return target info if it is visible to observer under detection radius."""
+        if (
+            not hasattr(observer_obj, "x")
+            or not hasattr(observer_obj, "y")
+            or observer_obj.x is None
+            or observer_obj.y is None
+            or not hasattr(target_obj, "x")
+            or not hasattr(target_obj, "y")
+            or target_obj.x is None
+            or target_obj.y is None
+        ):
+            return None
+
+        observer_pos = (observer_obj.x, observer_obj.y)
+        target_pos = (target_obj.x, target_obj.y)
+        distance = float(calculate_distance(observer_pos, target_pos))
+        detection_radius = getattr(observer_obj, "detection_radius", None)
+        if detection_radius is not None and distance > float(detection_radius):
+            return None
+
+        return {
+            "position": target_pos,
+            "distance": distance,
+        }
 
     def _is_red_agent_detected(self, red_agent):
         """Check if a red agent is detected by any active blue agent."""
@@ -256,7 +304,171 @@ class ACNEnvironmentLogic:
             
         return None
 
-    def _apply_action(self, agent_obj, action):
+    def _init_physics_engine(self):
+        """Create and populate the physics engine from environment config."""
+        if not self.use_physics:
+            self.physics_engine = None
+            return
+
+        self.physics_engine = PhysicsEngine(
+            grid_width=float(self.grid_width),
+            grid_height=float(self.grid_height),
+            boundary_mode=self.physics_config.get("boundary_mode", "clamp"),
+            default_drag=float(self.physics_config.get("default_drag", 0.0)),
+            default_mass=float(self.physics_config.get("default_mass", 1.0)),
+            default_max_speed=float(self.physics_config.get("default_max_speed", 10.0)),
+            default_max_force=float(self.physics_config.get("default_max_force", 10.0)),
+            default_turning_rate=self.physics_config.get("default_turning_rate", float("inf")),
+            default_radius=float(self.physics_config.get("default_radius", 0.5)),
+            default_restitution=float(self.physics_config.get("default_restitution", 0.8)),
+            enable_collisions=bool(self.physics_config.get("enable_collisions", True)),
+            enable_obstacles=bool(self.physics_config.get("enable_obstacles", True)),
+        )
+
+        for obstacle_config in self.physics_config.get("obstacles", []):
+            self.physics_engine.add_obstacle(create_obstacle(obstacle_config))
+
+        field_configs = self.physics_config.get(
+            "force_fields",
+            self.physics_config.get("fields", []),
+        )
+        for field_config in field_configs:
+            self.physics_engine.add_force_field(create_force_field(field_config))
+
+        for agent_obj in self.agent_objects.values():
+            self._register_physics_body(agent_obj)
+
+    def _register_physics_body(self, agent_obj):
+        """Register a single agent as a physics body."""
+        if self.physics_engine is None:
+            return
+
+        position = np.array([agent_obj.x, agent_obj.y], dtype=np.float32)
+        velocity = self._agent_velocity(agent_obj)
+        self.physics_engine.register_body(
+            agent_obj.name,
+            position=position,
+            velocity=velocity,
+            **self._physics_body_kwargs(agent_obj),
+        )
+
+    def _physics_body_kwargs(self, agent_obj):
+        """Build per-body physics options from global, type, and group config."""
+        agent_type = getattr(agent_obj.agent_type, "value", None)
+        body_config = {
+            "mass": self.physics_config.get("agent_mass", self.physics_config.get("default_mass", 1.0)),
+            "max_speed": self.physics_config.get(
+                "agent_max_speed",
+                self.physics_config.get("default_max_speed", 10.0),
+            ),
+            "max_force": self.physics_config.get(
+                "agent_max_force",
+                self.physics_config.get("default_max_force", 10.0),
+            ),
+            "drag": self.physics_config.get("agent_drag", self.physics_config.get("default_drag", 0.0)),
+            "turning_rate": self.physics_config.get(
+                "agent_turning_rate",
+                self.physics_config.get("default_turning_rate", float("inf")),
+            ),
+            "radius": self.physics_config.get(
+                "agent_radius",
+                self.physics_config.get("default_radius", 0.5),
+            ),
+            "restitution": self.physics_config.get(
+                "agent_restitution",
+                self.physics_config.get("default_restitution", 0.8),
+            ),
+        }
+
+        type_config = self.physics_config.get(agent_type, {})
+        if isinstance(type_config, dict):
+            body_config.update(type_config)
+
+        group_config = self._get_agent_config(agent_obj.name) or {}
+        group_physics = group_config.get("physics", {})
+        if isinstance(group_physics, dict):
+            body_config.update(group_physics)
+
+        return body_config
+
+    def _agent_velocity(self, agent_obj):
+        """Return an agent's current velocity vector from direction and speed."""
+        direction = getattr(agent_obj, "direction", None)
+        speed = getattr(agent_obj, "speed", 0.0)
+        if direction is None:
+            return np.zeros(2, dtype=np.float32)
+        try:
+            direction_arr = np.asarray(direction, dtype=np.float32).reshape(-1)
+            speed_value = float(np.asarray(speed, dtype=np.float32).reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):
+            return np.zeros(2, dtype=np.float32)
+        if direction_arr.shape[0] < 2:
+            return np.zeros(2, dtype=np.float32)
+        return direction_arr[:2] * speed_value
+
+    def _parse_movement_action(self, action):
+        """Parse the common direction/speed action format into a movement vector."""
+        if not isinstance(action, dict) or "direction" not in action or "speed" not in action:
+            return None
+
+        try:
+            direction = np.asarray(action["direction"], dtype=np.float32).reshape(-1)
+            speed = float(np.asarray(action["speed"], dtype=np.float32).reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):
+            return None
+
+        if direction.shape[0] < 2 or not np.isfinite(speed):
+            return None
+
+        movement = direction[:2] * speed
+        if not np.all(np.isfinite(movement)):
+            return None
+
+        return direction[:2], speed, movement.astype(np.float32)
+
+    def _begin_physics_step(self):
+        """Prepare velocity-controlled bodies before actions are applied."""
+        if (
+            not self.use_physics
+            or self.physics_engine is None
+            or self.physics_control_mode != "velocity"
+        ):
+            return
+
+        for agent_name in self.agents:
+            body = self.physics_engine.get_body(agent_name)
+            if body is not None:
+                body.velocity[:] = 0.0
+
+    def _advance_physics(self):
+        """Step physics and copy body state back onto agent objects."""
+        if not self.use_physics or self.physics_engine is None:
+            return
+
+        self.physics_engine.step(dt=self.physics_dt)
+        self._sync_agents_from_physics()
+
+    def _sync_agents_from_physics(self):
+        """Copy physics positions and velocities back to agent objects."""
+        if self.physics_engine is None:
+            return
+
+        for agent_name, agent_obj in self.agent_objects.items():
+            position = self.physics_engine.get_position(agent_name)
+            velocity = self.physics_engine.get_velocity(agent_name)
+            if position is None or velocity is None:
+                continue
+
+            agent_obj.x = float(position[0])
+            agent_obj.y = float(position[1])
+            speed = float(np.linalg.norm(velocity))
+            agent_obj.speed = speed
+            if speed > 1e-6:
+                agent_obj.direction = tuple((velocity / speed).astype(np.float32))
+            else:
+                agent_obj.direction = (0.0, 0.0)
+
+    def _apply_action(self, agent_obj, action, advance_physics=True):
         """
         Apply movement action to an agent.
         Returns check_detection (bool) - True if we should check for detection/rewards.
@@ -266,29 +478,55 @@ class ACNEnvironmentLogic:
         agent_type = getattr(agent_obj.agent_type, 'value', None)
         
         if agent_type in ['red', 'blue']:
-            # Handle composite action (direction + speed)
-            if isinstance(action, dict) and 'direction' in action and 'speed' in action:
-                direction = action['direction']
-                speed = action['speed']
-                
-                # Calculate movement vector (using floats for sub-pixel precision)
-                movement_x = float(direction[0] * speed)
-                movement_y = float(direction[1] * speed)
-                
-                # Update position
-                agent_obj.x += movement_x
-                agent_obj.y += movement_y
-                
-                # Boundary check
-                agent_obj.x = max(0, min(self.grid_width, agent_obj.x))
-                agent_obj.y = max(0, min(self.grid_height, agent_obj.y))
-                
-                # Update internal state
-                agent_obj.direction = tuple(direction)
-                agent_obj.speed = float(speed)
-                
-                return True # Valid action processed
-            return False # Invalid format
+            parsed_action = self._parse_movement_action(action)
+            if parsed_action is None:
+                return False
+
+            direction, speed, movement = parsed_action
+
+            if self.use_physics:
+                if self.physics_engine is None:
+                    self._init_physics_engine()
+                body = self.physics_engine.get_body(agent_obj.name)
+                if body is None:
+                    self._register_physics_body(agent_obj)
+                    body = self.physics_engine.get_body(agent_obj.name)
+                if body is None:
+                    return False
+
+                if advance_physics:
+                    self._begin_physics_step()
+
+                if self.physics_control_mode == "force":
+                    self.physics_engine.apply_force(agent_obj.name, movement)
+                else:
+                    body.velocity = movement
+
+                if advance_physics:
+                    self._advance_physics()
+                else:
+                    agent_obj.direction = tuple(direction)
+                    agent_obj.speed = float(speed)
+
+                return True
+
+            # Calculate movement vector (using floats for sub-pixel precision)
+            movement_x = float(movement[0])
+            movement_y = float(movement[1])
+
+            # Update position
+            agent_obj.x += movement_x
+            agent_obj.y += movement_y
+
+            # Boundary check
+            agent_obj.x = max(0, min(self.grid_width, agent_obj.x))
+            agent_obj.y = max(0, min(self.grid_height, agent_obj.y))
+
+            # Update internal state
+            agent_obj.direction = tuple(direction)
+            agent_obj.speed = float(speed)
+
+            return True # Valid action processed
         return False # Not a movable agent type
 
     def _calculate_reward(self, agent_name, agent_obj):

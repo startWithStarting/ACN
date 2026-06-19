@@ -1,6 +1,6 @@
 # ACN (Agent Communication Networks)
 
-A multi-agent simulation framework for researching communication protocols and distributed control in autonomous agent systems.
+A multi-agent simulation framework for researching communication protocols, CTDE and distributed control in autonomous agent systems with limited sensing, observability and communication.
 
 ![ACN Architecture](UMLdiagram.svg)
 

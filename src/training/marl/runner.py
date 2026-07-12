@@ -36,12 +36,16 @@ import torch
 from src.agents.action_spaces import ActionSpaceConfig
 from src.agents.factory import create_agents_from_config
 from src.communication.config import parse_communication_config
+from src.communication.registry import create_communication_plan
 from src.env.parallel_env import ParallelGameEnv
 from src.env.rewards import parse_reward_settings
 from src.env.sensors import ObservationConfig
 from src.training.marl.adapters import (
+    attach_communication_inputs,
     build_privileged_state,
+    build_team_communication_graph,
     encode_team_observations,
+    max_team_edges,
     privileged_state_dim,
 )
 from src.training.marl.config import (
@@ -51,7 +55,7 @@ from src.training.marl.config import (
 )
 from src.training.marl.contract import ScriptedTeamMethod, TeamTransition
 from src.training.marl.encoders import PolicyEncoder
-from src.training.marl.ppo import TeamPPO
+from src.training.marl.ppo import GnnCommSettings, TeamPPO
 from src.utils.config_loader import load_config
 from src.utils.experiment import build_file_run_id, setup_experiment_results_dir
 from src.utils.logger import get_logger
@@ -136,6 +140,30 @@ class MarlTrainingRunner:
             self.opponent_names,
             self.all_names,
         ) = self._resolve_team_names()
+        # Differentiable communication (multihop_gnn): compile the SAME plan
+        # the environment compiles (and skips executing) so the trainer runs
+        # the communication forward pass with identical topology/round
+        # definitions inside the actor.
+        self.communication_config = parse_communication_config(
+            self.env_config.get("communication")
+        )
+        self._communication_plan = (
+            create_communication_plan(self.communication_config)
+            if self.communication_config.is_active
+            else None
+        )
+        self._differentiable_comm = bool(
+            self._communication_plan is not None and self._communication_plan.differentiable
+        )
+        self._max_team_edges = max_team_edges(
+            len(self.team_names),
+            include_self_edges=self.communication_config.topology.include_self_edges,
+        )
+        comm_settings = (
+            GnnCommSettings.from_plan(self._communication_plan)
+            if self._differentiable_comm
+            else None
+        )
         self.encoder = self._build_encoder()
         num_actions = self._num_actions()
         self.method = TeamPPO(
@@ -144,6 +172,7 @@ class MarlTrainingRunner:
             feature_dim=self.encoder.feature_dim,
             privileged_dim=privileged_state_dim(len(self.all_names)),
             num_actions=num_actions,
+            comm=comm_settings,
         )
         if resume_path is not None:
             self._load_checkpoint(resume_path)
@@ -235,13 +264,20 @@ class MarlTrainingRunner:
         return team, opponents, all_names
 
     def _build_encoder(self) -> PolicyEncoder:
-        """Build the run's policy encoder from environment + training config."""
-        communication = parse_communication_config(self.env_config.get("communication"))
+        """Build the run's policy encoder from environment + training config.
+
+        For a differentiable scheme the observations carry NO communication
+        view (the env skips execution), so the encoder's comm feature width
+        is 0: the actor computes communication itself from the raw graph
+        inputs instead of consuming an env-delivered encoding.
+        """
+        communication = self.communication_config
+        comm_dim = 0 if self._differentiable_comm else communication.payload.dimension
         return PolicyEncoder(
             grid_width=float(self.env_config.get("width", 100)),
             grid_height=float(self.env_config.get("height", 80)),
             contact_slots=self.settings.encoder.contact_slots,
-            comm_dim=communication.payload.dimension,
+            comm_dim=comm_dim,
             comm_scheme=communication.scheme,
         )
 
@@ -303,6 +339,21 @@ class MarlTrainingRunner:
                     policy_inputs = encode_team_observations(
                         observations, self.team_names, self.encoder
                     )
+                    if self._differentiable_comm:
+                        # Raw graph inputs for the in-actor communication
+                        # stage: the frozen team graph at the pre-move
+                        # positions (the plan's own topology) plus the raw
+                        # node features. Stored in the rollout so updates
+                        # RECOMPUTE the communication forward pass.
+                        graph = build_team_communication_graph(
+                            env.agent_objects,
+                            self.team_names,
+                            self._communication_plan.topology,
+                            env.steps,
+                        )
+                        attach_communication_inputs(
+                            policy_inputs, graph, self._max_team_edges
+                        )
                     privileged = build_privileged_state(
                         env.agent_objects, self.all_names, grid_w, grid_h
                     )
@@ -406,6 +457,7 @@ class MarlTrainingRunner:
                 "actor": self.settings.actor,
                 "critic": self.settings.critic,
                 "feature_dim": self.encoder.feature_dim,
+                "comm_scheme": self.communication_config.scheme,
             },
         }
 
@@ -435,6 +487,7 @@ class MarlTrainingRunner:
             ("actor", self.settings.actor),
             ("critic", self.settings.critic),
             ("feature_dim", self.encoder.feature_dim),
+            ("comm_scheme", self.communication_config.scheme),
         ):
             if saved.get(key) != current:
                 mismatches.append(

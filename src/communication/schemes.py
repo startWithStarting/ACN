@@ -1,4 +1,4 @@
-"""Built-in communication scheme builders (Phases 1-3).
+"""Built-in communication scheme builders (Phases 1-4).
 
 Registers real named schemes with the registry in
 :mod:`src.communication.registry`. Phase 1 delivers ``one_hop_direct``:
@@ -6,7 +6,12 @@ same-team radius topology, synchronous slotted broadcast transport, and the
 inbox-preserving direct processor, running exactly one communication round
 per movement step. Phase 2 delivers ``one_hop_mean``: the same topology and
 transport, with the PyG aggregation processor reducing each agent's delivered
-inbox to one vector (``mean``, ``sum``, or ``max``).
+inbox to one vector (``mean``, ``sum``, or ``max``). Phase 3 delivers
+``multihop_relay`` (first-seen unchanged packet relay). Phase 4 delivers
+``multihop_gnn``: the first LEARNED scheme — R GraphSAGE rounds with sum
+aggregation, no cache, no relay, differentiable within one transition. Its
+compiled plan is a policy-side marker: the environment must never execute a
+differentiable scheme's rounds (see :class:`DifferentiableCommunicationMarker`).
 
 This module is imported by the registry's ``_auto_register`` (mirroring how
 ``src.agents.registry`` auto-imports strategy modules), so the decorators run
@@ -31,7 +36,22 @@ from src.utils.logger import get_logger
 
 logger = get_logger("acn.communication")
 
-__all__ = ["build_one_hop_direct", "build_one_hop_mean", "build_multihop_relay"]
+__all__ = [
+    "DifferentiableCommunicationMarker",
+    "build_one_hop_direct",
+    "build_one_hop_mean",
+    "build_multihop_relay",
+    "build_multihop_gnn",
+]
+
+#: Aggregations the multihop_gnn scheme accepts. The schema's absent-default
+#: ("none") selects the decision-log reference aggregation ("sum").
+_GNN_AGGREGATIONS = ("sum", "mean", "max")
+
+#: Default GNN depth (= rounds) and hidden width from the implementation
+#: plan's multihop_gnn reference configuration.
+_GNN_DEFAULT_LAYERS = 3
+_GNN_DEFAULT_HIDDEN_DIMENSION = 64
 
 
 def _field(config: object, name: str, default: object = None) -> object:
@@ -474,4 +494,299 @@ def build_multihop_relay(config: object) -> CommunicationPlan:
         graph_update="frozen",
         differentiable=False,
         output_contract="preserved-inbox",
+    )
+
+
+class DifferentiableCommunicationMarker:
+    """Policy-side execution marker for differentiable schemes.
+
+    A differentiable scheme's communication MUST run inside the policy/trainer
+    forward pass so autograd reaches every round
+    (``docs/communication_implementation_plan.md``, "Risks: Environment And
+    Policy Ownership Is Ambiguous"). The compiled plan therefore carries this
+    marker in its ``processor`` and ``transport`` slots: it satisfies both
+    protocols structurally, exposes the RESOLVED learned-scheme
+    hyperparameters for the trainer to read off the plan, and raises with an
+    actionable message if the environment runtime ever tries to execute a
+    round.
+
+    Attributes:
+        scheme: The differentiable scheme's name (for error messages).
+        rounds: ``R``; equals the number of GNN layers by the documented
+            one-layer-per-round equality.
+        aggregation: Resolved neighbour aggregation (``sum`` by default).
+        hidden_dimension: Resolved GNN hidden width.
+        message_dimension: Resolved output embedding width
+            (``payload.dimension``).
+        shared_weights: ``True`` when one set of round weights is shared
+            across all rounds; ``False`` keeps separate weights per round
+            (the default).
+    """
+
+    def __init__(
+        self,
+        scheme: str,
+        rounds: int,
+        aggregation: str,
+        hidden_dimension: int,
+        message_dimension: int,
+        shared_weights: bool,
+    ) -> None:
+        self.scheme = scheme
+        self.rounds = rounds
+        self.aggregation = aggregation
+        self.hidden_dimension = hidden_dimension
+        self.message_dimension = message_dimension
+        self.shared_weights = shared_weights
+
+    def _forbidden(self) -> RuntimeError:
+        """Build the error raised on any environment-side execution attempt."""
+        return RuntimeError(
+            "Communication scheme '{}' is differentiable: its rounds must run inside "
+            "the policy/trainer forward pass (using this plan's topology and round "
+            "definitions), NOT inside the environment. The environment must skip "
+            "communication execution for differentiable plans; observations then carry "
+            "no 'communication' key and the policy computes communication itself "
+            "(docs/communication_implementation_plan.md, 'Risks: Environment And Policy "
+            "Ownership Is Ambiguous').".format(self.scheme)
+        )
+
+    # -- CommunicationProcessor protocol (every method refuses to run) -----
+
+    def initialize(self, local_observations, graph, context):
+        """Raise: the env must not initialize a differentiable processor."""
+        raise self._forbidden()
+
+    def process_round(self, state, inbox, graph, round_index, context):
+        """Raise: the env must not run a differentiable round."""
+        raise self._forbidden()
+
+    def finalize(self, state, inbox, graph, context):
+        """Raise: the env must not finalize a differentiable processor."""
+        raise self._forbidden()
+
+    # -- RoundTransport protocol (every method refuses to run) -------------
+
+    def reset(self, graph, context):
+        """Raise: the env must not reset a differentiable scheme's transport."""
+        raise self._forbidden()
+
+    def transmit_round(self, outboxes, graph, transport_state, round_index, context):
+        """Raise: the env must not transport a differentiable scheme's frames."""
+        raise self._forbidden()
+
+
+@register_communication_scheme("multihop_gnn")
+def build_multihop_gnn(config: object) -> CommunicationPlan:
+    """Build the ``multihop_gnn`` plan (Phase 4, first learned scheme).
+
+    Semantics per the decision log ("Round And Cache Model", "PyG And
+    Protocol Boundary"): the ``C = 0`` learned corner — ``R`` GraphSAGE
+    rounds (default 3) with sum aggregation over the frozen same-team radius
+    graph, no cache, no relay, differentiable within ONE transition. ``R``
+    equals the number of GNN layers (``processor.layers``); one layer per
+    round is the documented equality and configs violating it are rejected.
+
+    The compiled plan is a MARKER for env-side execution: because the scheme
+    is differentiable, the environment must NOT execute its rounds. The
+    plan's ``processor``/``transport`` slots carry a
+    :class:`DifferentiableCommunicationMarker` that raises if the env runtime
+    tries to run them, and expose the resolved GNN hyperparameters for the
+    trainer. The trainer runs the actual
+    :class:`~src.communication.processors.gnn.GraphSAGECommunicator` inside
+    the actor's forward pass, building the frozen per-step graph with this
+    plan's ``topology`` — the same topology definition the env would use.
+
+    Args:
+        config: The ``environment.communication`` section — a typed
+            :class:`~src.communication.config.CommunicationConfig` or a
+            mapping using the documented schema field names.
+
+    Returns:
+        The compiled :class:`CommunicationPlan` with ``differentiable=True``
+        and output contract ``learned-embedding``.
+
+    Raises:
+        ValueError: On logically inconsistent combinations:
+            ``rounds_per_step != processor.layers``, a non-zero
+            ``cache_window`` (the scheme is the C = 0 corner), any relay
+            field (ttl/forwarding/packet_relay/duplicate_suppression), a
+            non-radius or non-frozen topology, a non-broadcast or non-slotted
+            transport, an unsupported model/backend/aggregation, or a payload
+            that is not ``learned`` with a positive dimension.
+    """
+    scheme = "multihop_gnn"
+
+    processor_cfg = _field(config, "processor")
+    layers = _field(processor_cfg, "layers", _GNN_DEFAULT_LAYERS)
+    if not isinstance(layers, int) or isinstance(layers, bool) or layers < 1:
+        raise _reject(
+            scheme, "processor.layers must be an integer >= 1, got {!r}.".format(layers)
+        )
+    rounds = _field(config, "rounds_per_step", layers)
+    if rounds != layers:
+        raise _reject(
+            scheme,
+            "rounds_per_step={!r} but processor.layers={}. One GNN layer corresponds to "
+            "exactly one communication round (R = GNN depth, the documented equality: "
+            "information propagates at most one graph hop per round/layer). Set "
+            "rounds_per_step: {} or adjust processor.layers.".format(rounds, layers, layers),
+        )
+
+    cache_window = _field(config, "cache_window", 0)
+    if cache_window != 0:
+        raise _reject(
+            scheme,
+            "cache_window={!r}, but multihop_gnn is the C = 0 learned corner: no message "
+            "cache, no relay — the R rounds propagate hidden state within one transition "
+            "only, which is what keeps the scheme differentiable end to end. Set "
+            "cache_window: 0 (or omit it).".format(cache_window),
+        )
+
+    topology_cfg = _field(config, "topology")
+    topology_type = _field(topology_cfg, "type", "radius")
+    if topology_type != "radius":
+        raise _reject(
+            scheme, "topology.type must be 'radius', got {!r}.".format(topology_type)
+        )
+    if _field(topology_cfg, "freeze_within_step", True) is not True:
+        raise _reject(
+            scheme,
+            "topology.freeze_within_step must be true; the same-team graph is frozen "
+            "across all R rounds of a movement step.",
+        )
+    radius_rule = _field(topology_cfg, "radius_rule", "sender")
+    include_self_edges = _field(topology_cfg, "include_self_edges", False)
+
+    transport_cfg = _field(config, "transport")
+    transport_type = _field(transport_cfg, "type", "slotted_radius")
+    if transport_type != "slotted_radius":
+        raise _reject(
+            scheme, "transport.type must be 'slotted_radius', got {!r}.".format(transport_type)
+        )
+    delivery = _field(transport_cfg, "delivery", "broadcast")
+    if delivery != "broadcast":
+        raise _reject(
+            scheme,
+            "transport.delivery must be 'broadcast', got {!r}; addressed delivery is a "
+            "later protocol feature.".format(delivery),
+        )
+
+    backend = _field(processor_cfg, "backend", "pyg")
+    if backend != "pyg":
+        raise _reject(
+            scheme,
+            "processor.backend must be 'pyg' (the GraphSAGE reference model), got "
+            "{!r}.".format(backend),
+        )
+    model = _field(processor_cfg, "model", "graph_sage")
+    if model != "graph_sage":
+        raise _reject(
+            scheme,
+            "processor.model must be 'graph_sage' (the first learned reference model), "
+            "got {!r}. Other GNN processors are later configuration-driven "
+            "extensions.".format(model),
+        )
+    update = _field(processor_cfg, "update", "identity")
+    if update != "identity":
+        raise _reject(
+            scheme,
+            "processor.update={!r}, but the learned node update is defined by "
+            "processor.model for this scheme; leave 'update' at its default.".format(update),
+        )
+    aggregation = _field(processor_cfg, "aggregation", "none")
+    if aggregation == "none":
+        # The schema's absent-default; the scheme's reference aggregation is sum.
+        aggregation = "sum"
+    if aggregation not in _GNN_AGGREGATIONS:
+        raise _reject(
+            scheme,
+            "processor.aggregation={!r}, but multihop_gnn supports: {} (sum is the "
+            "decision-log reference default).".format(
+                aggregation, ", ".join(_GNN_AGGREGATIONS)
+            ),
+        )
+    hidden_dimension = _field(processor_cfg, "hidden_dimension", _GNN_DEFAULT_HIDDEN_DIMENSION)
+    if (
+        not isinstance(hidden_dimension, int)
+        or isinstance(hidden_dimension, bool)
+        or hidden_dimension < 1
+    ):
+        raise _reject(
+            scheme,
+            "processor.hidden_dimension must be an integer >= 1, got {!r}.".format(
+                hidden_dimension
+            ),
+        )
+    shared_weights = _field(processor_cfg, "shared_weights", False)
+    if not isinstance(shared_weights, bool):
+        raise _reject(
+            scheme,
+            "processor.shared_weights must be a boolean, got {!r}.".format(shared_weights),
+        )
+    if (
+        _field(processor_cfg, "ttl") is not None
+        or _field(processor_cfg, "forwarding") is not None
+        or _field(processor_cfg, "duplicate_suppression") is not None
+        or bool(_field(processor_cfg, "packet_relay", False))
+    ):
+        raise _reject(
+            scheme,
+            "relay settings (ttl/forwarding/packet_relay/duplicate_suppression) are set, "
+            "but multihop_gnn performs learned multihop propagation with NO unchanged "
+            "packet relay: no relay queue, forwarding cache, duplicate suppression, or "
+            "packet TTL. Use 'multihop_relay' for packet relay.",
+        )
+
+    payload_cfg = _field(config, "payload")
+    payload_type = _field(payload_cfg, "type", "engineered_vector")
+    if payload_type != "learned":
+        raise _reject(
+            scheme,
+            "payload.type={!r}, but multihop_gnn emits learned embeddings: set "
+            "payload.type: 'learned' and payload.dimension to the message/embedding "
+            "dimension.".format(payload_type),
+        )
+    message_dimension = _field(payload_cfg, "dimension", None)
+    if (
+        not isinstance(message_dimension, int)
+        or isinstance(message_dimension, bool)
+        or message_dimension < 1
+    ):
+        raise _reject(
+            scheme,
+            "payload.dimension must be an integer >= 1 (the learned message/embedding "
+            "dimension), got {!r}.".format(message_dimension),
+        )
+
+    logger.debug(
+        "Building 'multihop_gnn' plan (rounds={}, aggregation={}, hidden={}, message={}, "
+        "shared_weights={}, radius_rule={})",
+        rounds,
+        aggregation,
+        hidden_dimension,
+        message_dimension,
+        shared_weights,
+        radius_rule,
+    )
+    marker = DifferentiableCommunicationMarker(
+        scheme=scheme,
+        rounds=int(rounds),
+        aggregation=str(aggregation),
+        hidden_dimension=int(hidden_dimension),
+        message_dimension=int(message_dimension),
+        shared_weights=bool(shared_weights),
+    )
+    return CommunicationPlan(
+        topology=RadiusTopology(
+            radius_rule=str(radius_rule),
+            include_self_edges=bool(include_self_edges),
+        ),
+        transport=marker,
+        processor=marker,
+        rounds=int(rounds),
+        cache_window=0,
+        graph_update="frozen",
+        differentiable=True,
+        output_contract="learned-embedding",
     )

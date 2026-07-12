@@ -27,8 +27,8 @@ from src.communication.types import CommunicationGraph, CommunicationResult
 
 # Named schemes defined by the implementation plan whose delivery phases have
 # not landed yet. Compiling them must raise NotImplementedError.
-# (one_hop_direct landed in Phase 1 and is now a registered scheme.)
-UNIMPLEMENTED_SCHEMES = ("multihop_gnn",)
+# (Currently empty: Phases 0-4 have all landed, multihop_gnn last.)
+UNIMPLEMENTED_SCHEMES = ()
 
 
 def _two_agent_graph(step: int = 0) -> CommunicationGraph:
@@ -153,7 +153,7 @@ class TestPlannedSchemes(unittest.TestCase):
     """Named schemes without a landed delivery phase raise NotImplementedError."""
 
     def test_unimplemented_named_schemes_raise_not_implemented(self):
-        """multihop_relay/multihop_gnn await their delivery phases."""
+        """Schemes awaiting their delivery phase raise NotImplementedError."""
         for scheme in UNIMPLEMENTED_SCHEMES:
             with self.subTest(scheme=scheme):
                 with self.assertRaises(NotImplementedError) as ctx:

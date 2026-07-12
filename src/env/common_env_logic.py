@@ -29,6 +29,9 @@ from src.env.rewards import (
     ring_potential,
 )
 from src.utils.geometry import calculate_distance
+from src.utils.logger import get_logger
+
+logger = get_logger("acn.env")
 
 # Constants
 DEFAULT_GRID_HEIGHT = 80
@@ -143,18 +146,38 @@ class ACNEnvironmentLogic:
             self.env_config.get("communication")
         )
         self.communication_runtime = None
+        # The compiled plan of an active scheme (None when disabled). For a
+        # DIFFERENTIABLE scheme (e.g. multihop_gnn) this is the only
+        # communication state the env keeps: trainers read the plan's
+        # topology/round definitions off it, but the env itself never
+        # executes the rounds.
+        self.communication_plan = None
         self._communication_source = None
         # Trace records of the most recent communication step (plain dicts from
         # src.communication.tracing), for recorders and analysis code.
         self.last_communication_trace_records = []
         if self.communication_config.is_active:
             plan = create_communication_plan(self.communication_config)
-            self.communication_runtime = CommunicationRuntime(
-                plan, scheme_name=self.communication_config.scheme
-            )
-            self._communication_source = create_message_source(
-                self.communication_config.payload
-            )
+            self.communication_plan = plan
+            if plan.differentiable:
+                # Differentiable communication MUST run in the policy/trainer
+                # forward path, never inside env.step(): the env skips
+                # communication execution entirely, so observations carry NO
+                # "communication" key for this scheme and the policy computes
+                # communication itself (docs/communication_implementation_plan
+                # .md, "Risks: Environment And Policy Ownership Is Ambiguous").
+                logger.info(
+                    "Communication scheme '{}' is differentiable: env-side execution "
+                    "is skipped; the policy/trainer computes communication.",
+                    self.communication_config.scheme,
+                )
+            else:
+                self.communication_runtime = CommunicationRuntime(
+                    plan, scheme_name=self.communication_config.scheme
+                )
+                self._communication_source = create_message_source(
+                    self.communication_config.payload
+                )
 
     def _distribute_agents(self):
         """Categorize agents into red and blue lists."""

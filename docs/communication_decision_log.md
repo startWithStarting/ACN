@@ -801,3 +801,29 @@ types, configuration, and tests can be evaluated:
 - Asynchronous/event-driven communication fidelity.
 - Exact benchmark scenario manifest, seeds, and final reward component weights.
 - Red-learning reward shaping beyond the existing scoring reward.
+
+### Resolved By The multihop_gnn Implementation
+
+The learned-scheme implementation fixed the following of the deferred
+choices for the first `multihop_gnn` configuration:
+
+- Round weights: separate GraphSAGE weights per round are the default; a
+  single weight set shared (recurrent) across all `R` rounds is selectable
+  with `processor.shared_weights: true`. The round count — and therefore the
+  hop limit — is unchanged by weight sharing.
+- Communication encoders: the trainable team uses ONE communication encoder
+  inside its shared actor (parameter sharing extends to the communicator).
+  Team-specific encoders arise trivially because exactly one team trains per
+  run; a shared-across-teams encoder question only exists for the deferred
+  self-play mode.
+- Stateless versus recurrent communication state: the first learned scheme is
+  stateless across movement steps by definition (`C = 0`; hidden state exists
+  only within the step's `R` rounds). Recurrent cross-step communication
+  state remains a future scheme.
+- Execution ownership: differentiable communication runs in the
+  policy/trainer forward path using the compiled plan's own topology and
+  round definitions; the environment compiles and validates the plan but
+  never executes it (its processor slot is an execution-refusing marker).
+  Rollouts store raw node features and the frozen edge_index so PPO updates
+  recompute the communication forward pass; detached embeddings are never
+  the stored training input.

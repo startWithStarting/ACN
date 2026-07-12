@@ -314,6 +314,9 @@ class ProcessorConfig:
         layers: Optional learned model depth. One configured layer corresponds
             to one communication round unless a scheme documents otherwise.
         hidden_dimension: Optional learned hidden state width.
+        shared_weights: Optional flag for learned schemes: ``true`` shares one
+            set of round weights across all R rounds; ``false``/absent keeps
+            separate weights per round (the ``multihop_gnn`` default).
         packet_relay: Optional flag for packet-preserving relay state.
         forwarding: Optional relay forwarding rule (e.g. ``"first_seen_unchanged"``).
         ttl: Optional packet time-to-live in hops (one hop per round).
@@ -326,6 +329,7 @@ class ProcessorConfig:
     model: Optional[str] = None
     layers: Optional[int] = None
     hidden_dimension: Optional[int] = None
+    shared_weights: Optional[bool] = None
     packet_relay: Optional[bool] = None
     forwarding: Optional[str] = None
     ttl: Optional[int] = None
@@ -365,6 +369,7 @@ class ProcessorConfig:
                 "model",
                 "layers",
                 "hidden_dimension",
+                "shared_weights",
                 "packet_relay",
                 "forwarding",
                 "ttl",
@@ -380,6 +385,7 @@ class ProcessorConfig:
             model=_get_optional_str(data, "model", context),
             layers=_get_optional_int(data, "layers", context),
             hidden_dimension=_get_optional_int(data, "hidden_dimension", context),
+            shared_weights=_get_optional_bool(data, "shared_weights", context),
             packet_relay=_get_optional_bool(data, "packet_relay", context),
             forwarding=_get_optional_str(data, "forwarding", context),
             ttl=_get_optional_int(data, "ttl", context),

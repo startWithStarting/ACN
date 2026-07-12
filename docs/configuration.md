@@ -351,8 +351,9 @@ Supported keys:
 * `enabled`: Defaults to `false`. Communication only runs when explicitly
   enabled with a non-`none` scheme.
 * `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`,
-  `one_hop_mean`, `multihop_relay`. Reserved for later delivery phases:
-  `multihop_gnn`.
+  `one_hop_mean`, `multihop_relay`, `multihop_gnn` (the learned,
+  differentiable scheme — see its section below: the environment does NOT
+  execute it).
 * `rounds_per_step` (R): Synchronous communication rounds per movement step,
   run over a graph frozen at the start of the step. One round moves a message
   at most one graph hop. `one_hop_direct` and `one_hop_mean` require
@@ -379,8 +380,11 @@ Supported keys:
   other names are rejected at plan build.
 * `processor.ttl`, `processor.forwarding`, `processor.packet_relay`,
   `processor.duplicate_suppression`: Relay settings; required by and only
-  valid for `multihop_relay`; rejected for `one_hop_direct` and
-  `one_hop_mean`.
+  valid for `multihop_relay`; rejected for `one_hop_direct`,
+  `one_hop_mean`, and `multihop_gnn`.
+* `processor.model`, `processor.layers`, `processor.hidden_dimension`,
+  `processor.shared_weights`: Learned-scheme settings; only meaningful for
+  `multihop_gnn` (see its section below).
 * `transport.type` / `transport.delivery`: The initial transport is
   `slotted_radius` with `broadcast` delivery and no loss, queues, or cost.
 
@@ -437,6 +441,73 @@ Model"):
   drops — previous hop, and remaining ttl), appended to
   `last_communication_trace_records`.
 
+#### The `multihop_gnn` Scheme (Phase 4, Learned)
+
+The first LEARNED communication configuration — the `C = 0` corner of the
+round-and-cache model (`docs/communication_decision_log.md`): `R` GraphSAGE
+message-passing rounds with sum aggregation over the frozen same-team radius
+graph, no cache, no relay, differentiable within one transition. `R` equals
+the number of GNN layers (`processor.layers`); one layer per round is the
+documented equality and the compiler rejects `rounds_per_step !=
+processor.layers`, a non-zero `cache_window`, and any relay field.
+
+```yaml
+environment:
+  communication:
+    enabled: true
+    scheme: "multihop_gnn"
+    rounds_per_step: 3         # R = GNN depth: one layer per round
+    cache_window: 0            # required: the C=0 learned corner
+    payload:
+      type: "learned"          # required; engineered payloads are rejected
+      dimension: 16            # learned message/embedding dimension
+    processor:
+      backend: "pyg"           # required (default)
+      model: "graph_sage"      # required (default; the reference model)
+      layers: 3                # must equal rounds_per_step (default 3)
+      aggregation: "sum"       # default; "mean" and "max" selectable
+      hidden_dimension: 32     # GNN hidden width (default 64)
+      shared_weights: false    # default: separate SAGE weights per round;
+                               # true shares ONE set across all R rounds
+```
+
+**The environment does not execute differentiable communication.** Scripted
+schemes (`one_hop_*`, `multihop_relay`) run inside `env.step()` because no
+gradient flows through their deliveries. A differentiable scheme's rounds
+must instead run inside the policy/trainer forward pass — otherwise the
+communication computation would be detached from the trainable actor and the
+message functions could never be trained end to end
+(`docs/communication_implementation_plan.md`, "Risks: Environment And Policy
+Ownership Is Ambiguous"). Concretely:
+
+* The env still compiles and validates the plan (config errors surface at
+  construction), but skips communication execution entirely: observations
+  carry **no `communication` key** for this scheme, infos carry no
+  communication counts, and no communication trace records are produced. The
+  compiled plan's processor/transport slots hold a marker that raises if any
+  env runtime tries to run a round.
+* The MARL trainer detects the differentiable plan and runs the actual
+  computation (`src.communication.processors.gnn.GraphSAGECommunicator`:
+  linear encoder -> R `SAGEConv` rounds -> linear projection to the
+  `payload.dimension` embedding) inside the shared actor's forward pass,
+  building the frozen per-step team graph with the compiled plan's OWN
+  `RadiusTopology` — the same topology/round definitions the env validates —
+  over the agents' resolved `communication_radius`. Encoder, message rounds,
+  and action head train jointly; rollouts store the RAW node features and
+  edge_index (never detached embeddings) so every PPO update recomputes the
+  communication forward pass with current parameters.
+* Information propagates at most `R` graph hops per step, by construction of
+  the R message-passing rounds: each agent's action depends only on its own
+  local features plus messages reachable within `R` hops, regardless of
+  batching.
+* Running such a scenario WITHOUT the MARL trainer (plain `--mode parallel`
+  with scripted agents) is valid but means nobody computes communication:
+  scripted controllers simply act on their local observations.
+
+Reference scenario: `config/benchmark_blue_mappo_gnn.yaml` (the
+`benchmark_blue_mappo.yaml` scenario with `multihop_gnn`: rounds 3, layers 3,
+sum aggregation, hidden width 32, message dimension 16).
+
 #### Step Flow (Parallel Environment)
 
 `ParallelGameEnv.step(actions)` runs the communication phase BEFORE movement,
@@ -467,9 +538,12 @@ must not emulate synchronous communication rounds).
 
 #### Observation And Infos Contract
 
-When communication is enabled, every observation dict (from `reset` and
-`step`) carries a `communication` key; the disabled path never adds the key,
-so legacy observation dicts stay structurally identical. The view is:
+When an env-executed (non-differentiable) scheme is enabled, every
+observation dict (from `reset` and `step`) carries a `communication` key; the
+disabled path never adds the key, so legacy observation dicts stay
+structurally identical, and differentiable schemes (`multihop_gnn`) never add
+it either — the policy computes communication itself (see the `multihop_gnn`
+section above). The view is:
 
 ```python
 observation["communication"] == {
@@ -649,6 +723,13 @@ Semantics and constraints:
   `one_hop_direct`/`multihop_relay` inboxes are mean-pooled at the policy
   boundary; scheme `none`/absent contributes zeros so ablations share one
   feature layout).
+* **Differentiable communication** (`multihop_gnn`): the encoder's
+  communication feature width is 0 (observations carry no communication view)
+  and the actor instead runs the GraphSAGE communication stage inside its
+  forward pass over the raw team node features and the frozen per-step
+  edge_index, training encoder, message rounds, and action head end to end.
+  Rollouts store the raw graph inputs so updates recompute the communication
+  forward pass; see "The `multihop_gnn` Scheme" above.
 * **Determinism and resume**: runs are fully seeded and headless (rendering
   and GIFs are forcibly disabled). Every episode starts from a fresh
   environment seeded from the master seed and a checkpointed reset counter.
@@ -663,9 +744,10 @@ Semantics and constraints:
 
 Reference scenarios: `config/benchmark_blue_mappo.yaml` (learned blue,
 bearing-only sensor, `one_hop_mean` communication, benchmark blue reward,
-scripted avoidant reds) and `config/benchmark_red_mappo.yaml` (learned red,
-benchmark red reward, scripted VAR-pursuit blues with privileged access,
-communication disabled).
+scripted avoidant reds), `config/benchmark_blue_mappo_gnn.yaml` (the same
+scenario with learned `multihop_gnn` communication trained inside the actor),
+and `config/benchmark_red_mappo.yaml` (learned red, benchmark red reward,
+scripted VAR-pursuit blues with privileged access, communication disabled).
 
 ## Current Runtime Caveats
 

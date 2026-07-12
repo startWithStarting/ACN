@@ -322,6 +322,21 @@ class EdgeMessageBatch:
         """Number of message rows ``M`` in the batch."""
         return self.payload.size(0)
 
+    def trace_summary(self) -> Dict[str, Any]:
+        """Compact JSON-safe summary for transition trace rows.
+
+        Transition JSONL rows must not embed live payload tensors (trace
+        policy in ``docs/communication_implementation_plan.md``, "Trace
+        Records"); the dedicated communication delivery records carry the
+        per-delivery detail, cross-referenced here by message id.
+        """
+        return {
+            "type": "EdgeMessageBatch",
+            "num_messages": self.num_messages,
+            "payload_dim": int(self.payload.size(1)) if self.payload.dim() > 1 else None,
+            "message_ids": self.message_id.tolist(),
+        }
+
     def select(self, index: Union[torch.Tensor, Sequence[int]]) -> EdgeMessageBatch:
         """Return a new batch containing the rows selected by ``index``.
 
@@ -1001,6 +1016,18 @@ class MessageCache:
         """Yield ``(entry, age)`` pairs with age derived as in :meth:`CacheEntry.age`."""
         for entry in self.entries():
             yield entry, entry.age(current_step)
+
+    def trace_summary(self) -> Dict[str, Any]:
+        """Compact JSON-safe summary for transition trace rows.
+
+        Cache entries hold live payload objects, which must not be embedded
+        in transition JSONL rows; only the window occupancy is summarized.
+        """
+        return {
+            "type": "MessageCache",
+            "size": len(self),
+            "capacity_rounds": self._capacity_rounds,
+        }
 
     def clear(self) -> None:
         """Drop all entries and reset the round window (episode reset)."""

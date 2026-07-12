@@ -74,7 +74,16 @@ def to_jsonable(value: Any) -> Any:
         return [to_jsonable(item) for item in value]
     if isinstance(value, set):
         return sorted(to_jsonable(item) for item in value)
-    return value
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Runtime objects that opt into a compact trace form (e.g. the live
+    # communication-view types carried in observations) are summarized;
+    # any other non-JSON object falls back to repr() so a policy-facing
+    # runtime object can never crash trace recording.
+    summarize = getattr(value, "trace_summary", None)
+    if callable(summarize):
+        return to_jsonable(summarize())
+    return repr(value)
 
 
 def _agent_side(agent_obj: Any) -> Optional[str]:

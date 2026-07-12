@@ -340,8 +340,9 @@ Supported keys:
 
 * `enabled`: Defaults to `false`. Communication only runs when explicitly
   enabled with a non-`none` scheme.
-* `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`. Reserved for
-  later delivery phases: `one_hop_mean`, `multihop_relay`, `multihop_gnn`.
+* `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`,
+  `multihop_relay`. Reserved for later delivery phases: `one_hop_mean`,
+  `multihop_gnn`.
 * `rounds_per_step` (R): Synchronous communication rounds per movement step,
   run over a graph frozen at the start of the step. One round moves a message
   at most one graph hop. `one_hop_direct` requires exactly `1`.
@@ -359,12 +360,53 @@ Supported keys:
   is the anonymous bearing report
   `[observer_x, observer_y, direction_x, direction_y]` produced by
   `src.communication.sources.EngineeredBearingSource`.
-* `processor.aggregation`: Must be `none` for `one_hop_direct` (its contract
-  preserves distinct messages); aggregating schemes arrive in Phase 2.
-* `processor.ttl`, `processor.forwarding`, `processor.packet_relay`: Relay
-  settings; rejected for `one_hop_direct` (use `multihop_relay` later).
+* `processor.aggregation`: Must be `none` for `one_hop_direct` and
+  `multihop_relay` (their contracts preserve distinct messages); aggregating
+  schemes arrive in Phase 2.
+* `processor.ttl`, `processor.forwarding`, `processor.packet_relay`,
+  `processor.duplicate_suppression`: Relay settings; rejected for
+  `one_hop_direct` (use `multihop_relay`).
 * `transport.type` / `transport.delivery`: The initial transport is
   `slotted_radius` with `broadcast` delivery and no loss, queues, or cost.
+
+#### The `multihop_relay` Scheme (Phase 3)
+
+First-seen unchanged packet relay over the same topology and transport
+(`src.communication.processors.relay.RelayProcessor`):
+
+```yaml
+environment:
+  communication:
+    enabled: true
+    scheme: "multihop_relay"
+    rounds_per_step: 2      # R >= 1; one graph hop per round
+    cache_window: 3         # C; must satisfy C >= processor.ttl
+    processor:
+      ttl: 3                # required; total hop budget per message
+      # forwarding: "first_seen_unchanged"   (default; only valid value)
+      # duplicate_suppression: true          (default; required true)
+```
+
+Semantics (see `docs/communication_implementation_plan.md`, "Unchanged Relay
+Processing", and `docs/communication_decision_log.md`, "Round And Cache
+Model"):
+
+* A first-seen packet is delivered to the receiver's inbox view and
+  forwarded in the NEXT round to the receiver's valid out-neighbours except
+  the packet's previous hop; the payload is forwarded byte-identical, with
+  `origin` and `message_id` preserved across hops (the inbox distinguishes
+  the true origin from the immediate sender).
+* `processor.ttl` is the total hop budget; a copy with no budget left is
+  delivered but never re-emitted. `ttl > rounds_per_step` is allowed: the
+  relay continues at round 0 of the next movement step over the new graph.
+* Duplicates are dropped before app delivery and forwarding, keyed by
+  `message_id` per receiver. The duplicate-suppression memory horizon equals
+  `cache_window`, which is why the compiler enforces the relay-correctness
+  floor `cache_window >= ttl`.
+* Every protocol decision is traced as a `communication_relay` record
+  (`delivered` / `dropped_duplicate` / `dropped_ttl` / `forwarded` with
+  step, round, message id, origin, sender, receiver, previous hop, and
+  remaining ttl), appended to `last_communication_trace_records`.
 
 #### Step Flow (Parallel Environment)
 

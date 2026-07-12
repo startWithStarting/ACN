@@ -5,8 +5,9 @@ Covers the acceptance criteria of docs/communication_implementation_plan.md
 round, duplicate suppression under cycles, TTL exhaustion, previous-hop
 exclusion, origin vs immediate sender, byte-identical payloads end to end,
 cross-step continuation when ``TTL > R``, agents leaving the graph while a
-carryover is pending, the ``C == TTL`` window boundary, input-order
-determinism, scheme compilation, and env integration.
+carryover is pending, suppressed copies staying off the caches and the
+delivered log, the ``C == TTL`` window boundary, input-order determinism,
+scheme compilation, and env integration.
 """
 
 import json
@@ -142,7 +143,7 @@ class TestChainRelay(unittest.TestCase):
         self.assertEqual(inbox_b.round_index.tolist(), [0])
 
     def test_packets_travel_one_graph_edge_per_round(self):
-        """Every transported copy has crossed exactly round + 1 hops."""
+        """Every accepted copy has crossed exactly round + 1 hops."""
         delivered = self.result.delivered_messages
         self.assertGreater(delivered.num_messages, 0)
         for round_value, hops in zip(
@@ -411,6 +412,47 @@ class TestAgentLeavesGraphMidRelay(unittest.TestCase):
         self.assertEqual(dropped[0]["origin"], "A")
 
 
+class TestSuppressedCopiesStayOffDeliverySurfaces(unittest.TestCase):
+    """Duplicate-suppressed copies never reach caches or the delivered log.
+
+    Fully connected triangle A-B-C, R=2, TTL=2, C=2, only A emits: round 1
+    physically broadcasts B's and C's forwards back to A and to each other,
+    but all four of those copies are duplicates. Only the two first-seen
+    round-0 copies may reach policy-visible delivery surfaces (the app
+    inbox, the per-agent MessageCache, and ``delivered_messages`` — the
+    source of the env's ``messages_delivered`` counts).
+    """
+
+    def setUp(self):
+        self.runtime = relay_runtime(rounds=2, ttl=2, cache_window=2)
+        self.result = self.runtime.run_step(
+            local_observations={},
+            outboxes={"A": [source_frame(PAYLOAD, "A")]},
+            step=0,
+            agents=agents_from_positions(TRIANGLE_POSITIONS, TRIANGLE_RADIUS),
+        )
+
+    def test_delivered_messages_contains_only_first_seen_rows(self):
+        delivered = self.result.delivered_messages
+        self.assertEqual(delivered.num_messages, 2)
+        self.assertEqual(delivered.metadata["hop_count"].tolist(), [1, 1])
+
+    def test_the_suppressed_echoes_were_transmitted_and_traced(self):
+        self.assertEqual(len(relay_records(self.result, "dropped_duplicate")), 4)
+
+    def test_origin_cache_holds_no_echo_of_its_own_message(self):
+        self.assertEqual(len(self.runtime.cache_for("A")), 0)
+
+    def test_receiver_caches_hold_exactly_the_accepted_copy(self):
+        for agent_id in ("B", "C"):
+            entries = self.runtime.cache_for(agent_id).entries()
+            self.assertEqual(len(entries), 1, agent_id)
+            cached = entries[0].message
+            self.assertEqual(cached.origin, "A")
+            self.assertEqual(cached.receiver, agent_id)
+            self.assertEqual(cached.hop_count, 1)
+
+
 class TestCacheWindowBoundary(unittest.TestCase):
     """C == TTL: a message still live at the window edge is not re-accepted.
 
@@ -668,6 +710,24 @@ class TestEnvIntegration(unittest.TestCase):
         }
         self.assertIn(RELAY_RECORD_TYPE, record_types)
         json.dumps(env.last_communication_trace_records)
+
+    def test_messages_delivered_counts_match_the_accepted_app_inbox(self):
+        """infos counts never include duplicate-suppressed broadcast echoes."""
+        env = self._make_env()
+        env.reset(seed=11)
+        for _ in range(4):
+            actions = {
+                name: {"direction": (0.0, 0.0), "speed": 0.0} for name in env.agents
+            }
+            observations, _, _, _, infos = env.step(actions)
+            for name in env.agents:
+                inbox = observations[name]["communication"]["inbox"]
+                accepted = inbox.num_messages if hasattr(inbox, "num_messages") else 0
+                self.assertEqual(
+                    infos[name]["communication"]["messages_delivered"],
+                    accepted,
+                    name,
+                )
 
 
 if __name__ == "__main__":

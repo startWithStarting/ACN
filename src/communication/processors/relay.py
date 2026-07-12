@@ -34,7 +34,11 @@ previous hop in two layers: when the previous hop is the only out-neighbour
 targets exist, the frame is emitted (and traced as ``forwarded`` per intended
 target), and the broadcast copy physically reaching the previous hop is
 suppressed at delivery as a guaranteed duplicate (the previous hop has, by
-construction, already seen the message).
+construction, already seen the message). Suppressed copies never reach the
+application inbox, the per-agent message caches, or the step's
+``delivered_messages`` log (see :meth:`RelayProcessor.accepted_rows`); they
+remain visible only as transport-level ``communication_delivery`` records
+paired with ``dropped_duplicate`` relay records.
 
 Cross-step continuation and the cache window:
 
@@ -319,12 +323,15 @@ class RelayProcessor:
 
     Implements the same duck-typed surface as
     :class:`~src.communication.processors.identity.DirectProcessor`
-    (``initialize`` / ``process_round`` / ``emit_round`` / ``finalize``) and
-    additionally re-emits first-seen copies through the runtime's
-    ``emit_round`` hook. Round state is the ordered list of *accepted*
-    (first-seen) delivery batches; ``finalize`` returns the preserved,
-    origin-distinct application inbox per agent, plus the step's relay
-    decision records under ``diagnostics["processor_trace_records"]``.
+    (``initialize`` / ``process_round`` / ``emit_round`` / ``finalize``),
+    re-emits first-seen copies through the runtime's ``emit_round`` hook, and
+    reports the first-seen row indices of each round through the runtime's
+    ``accepted_rows`` hook, so duplicate-suppressed copies never enter the
+    per-agent message caches or the step's ``delivered_messages`` log. Round
+    state is the ordered list of *accepted* (first-seen) delivery batches;
+    ``finalize`` returns the preserved, origin-distinct application inbox per
+    agent, plus the step's relay decision records under
+    ``diagnostics["processor_trace_records"]``.
 
     Cross-step protocol memory (duplicate cache, carryover queue) lives in
     the shared :class:`RelayState`; see the module docstring for its horizon
@@ -356,6 +363,7 @@ class RelayProcessor:
         self._cache_window = cache_window
         self._state = state if state is not None else RelayState()
         self._pending: List[_QueuedForward] = []
+        self._last_accepted: List[int] = []
 
     @property
     def state(self) -> RelayState:
@@ -383,6 +391,7 @@ class RelayProcessor:
             The initial round state (an empty list).
         """
         self._pending = []
+        self._last_accepted = []
         return []
 
     def _prune_seen(self, current_round: int) -> None:
@@ -428,8 +437,10 @@ class RelayProcessor:
         current_round = self._state.rounds_completed
         self._prune_seen(current_round)
         self._pending = []
+        self._last_accepted = []
         if isinstance(inbox, EdgeMessageBatch) and inbox.num_messages > 0:
             accepted = self._process_rows(inbox, graph, round_index, context, current_round)
+            self._last_accepted = accepted
             if accepted:
                 batches.append(inbox.select(accepted))
         self._state.rounds_completed = current_round + 1
@@ -506,6 +517,34 @@ class RelayProcessor:
                 )
             )
         return accepted
+
+    def accepted_rows(
+        self,
+        delivered: EdgeMessageBatch,
+        graph: CommunicationGraph,
+        round_index: int,
+        context: Mapping[str, object],
+    ) -> List[int]:
+        """Return the first-seen row indices of the round just processed.
+
+        Runtime hook (see :mod:`src.communication.runtime`): called once per
+        round, immediately after :meth:`process_round` with the same
+        delivered batch. Only these rows enter the receivers' message caches
+        and the step's ``delivered_messages`` log, so duplicate-suppressed
+        copies (e.g. the broadcast echo back to a previous hop) never reach
+        policy-visible delivery surfaces.
+
+        Args:
+            delivered: The delivered batch of the round just processed
+                (unused; the indices were computed by :meth:`process_round`).
+            graph: The frozen communication graph (unused).
+            round_index: Zero-based round index (unused).
+            context: Public runtime context (unused).
+
+        Returns:
+            Accepted row indices of the last processed round, in row order.
+        """
+        return list(self._last_accepted)
 
     def emit_round(
         self,

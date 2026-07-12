@@ -1,0 +1,98 @@
+# First trainable benchmark: learned BLUE team (MAPPO: shared actor, global
+# privileged critic) against scripted avoidant reds.
+#
+# Composition per docs/communication_decision_log.md:
+# - bearing-only blue sensor with scripted_blue_privileged: false — blue is
+#   the TRAINABLE team, so no privileged key may exist in blue observations
+#   (the privileged mode exists for scripted blues only);
+# - discrete movement action space (flat Discrete(N), N = 1 + H*(S-1));
+# - one_hop_mean communication (aggregated {"vector","count"} view);
+# - benchmark blue reward (pin/track/shape coverage minus scoring penalty);
+# - scripted avoidant reds as the seed opponent curriculum stage.
+#
+# Sizes are deliberately tiny (4v2, short episodes) so this file doubles as a
+# test fixture; scale up for real experiments.
+experiment_name: "benchmark_blue_mappo"
+results_base_dir: "results/benchmark_blue_mappo"
+
+agents:
+  blue_agents:
+    - count: 4
+      communication_bandwidth: 5
+      processing_capability: 5
+      detection_radius: 40.0
+      strategy_type: "pursuit"      # unused while blue is the trainable team
+      max_speed: 10.0
+      communication_radius: 60.0
+  red_agents:
+    - count: 2
+      communication_bandwidth: 0
+      processing_capability: 0
+      detection_radius: 25.0
+      strategy_type: "avoidant"
+      max_speed: 6.0
+
+environment:
+  width: 120
+  height: 120
+  max_cycles: 64
+  render_mode: null
+  save_episode_gifs: false
+  action_space:
+    type: "discrete"
+    headings: 8
+    speed_levels: 4
+  observation:
+    blue_sensor: "bearing_only"
+    scripted_blue_privileged: false
+  reward:
+    blue: "benchmark"
+    red: "legacy"
+    weights:
+      pin: 0.5
+      track: 1.0
+      shape: 0.1
+      score_penalty: 1.0
+  communication:
+    enabled: true
+    scheme: "one_hop_mean"
+    rounds_per_step: 1
+    cache_window: 0
+    processor:
+      aggregation: "mean"
+  physics:
+    enabled: true
+    control_mode: "velocity"
+    enable_collisions: false
+
+training:
+  backend: "marl"
+  trainable_team: "blue"
+  actor: "shared"
+  critic: "global"
+  rollout_length: 64
+  updates: 50
+  epochs: 4
+  minibatches: 4
+  lr: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  seed: 7
+  device: "cpu"
+  checkpoint_every: 10
+  hidden_size: 64
+  encoder:
+    contact_slots: 8
+
+analysis:
+  trace:
+    enabled: false
+  plots:
+    generate_after_run: false
+
+logging:
+  level: "INFO"

@@ -16,11 +16,12 @@ Example:
 
         plan = create_communication_plan(config)
 
-Registered built-in schemes: ``none`` (Phase 0), ``one_hop_direct`` (Phase 1)
-and ``one_hop_mean`` (Phase 2, both :mod:`src.communication.schemes`). The
-remaining named schemes (``multihop_relay``, ``multihop_gnn``) are reserved:
-compiling them raises ``NotImplementedError`` naming the delivery phase that
-adds them.
+Registered built-in schemes: ``none`` (Phase 0), ``one_hop_direct``
+(Phase 1), ``one_hop_mean`` (Phase 2), ``multihop_relay`` (Phase 3), and
+``multihop_gnn`` (Phase 4) — all built in :mod:`src.communication.schemes`
+except ``none``. Compiling a named scheme whose delivery phase has not landed
+raises ``NotImplementedError`` naming that phase (no scheme is currently in
+that state).
 """
 
 from __future__ import annotations
@@ -48,10 +49,8 @@ _SCHEME_REGISTRY: Dict[str, SchemeBuilder] = {}
 
 # Named schemes defined by the implementation plan but not implemented yet,
 # mapped to the delivery phase that adds them. They must NOT be registered
-# until that phase lands.
-_PLANNED_SCHEME_PHASES: Dict[str, str] = {
-    "multihop_gnn": "Phase 4 (Learned PyG Communication)",
-}
+# until that phase lands. (Currently empty: Phases 0-4 have all landed.)
+_PLANNED_SCHEME_PHASES: Dict[str, str] = {}
 
 
 def register_communication_scheme(name: str) -> Callable[[SchemeBuilder], SchemeBuilder]:

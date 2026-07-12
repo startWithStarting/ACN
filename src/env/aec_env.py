@@ -56,7 +56,9 @@ class AECGameEnv(AECEnv, ACNEnvironmentLogic):
                 "Run with --mode parallel, or keep both reward modes 'legacy'."
             )
 
-        if self.communication_runtime is not None:
+        # Checked on the config (not the runtime) because differentiable
+        # schemes leave communication_runtime None while still being active.
+        if self.communication_config.is_active:
             raise NotImplementedError(
                 "Communication (environment.communication with scheme '{}') is not supported "
                 "by the AEC environment: the benchmark communication runtime is "

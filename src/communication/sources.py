@@ -13,8 +13,20 @@ anonymous contact report per locally visible opponent with payload
 a global-frame unit bearing ``(cos(theta), sin(theta))`` from the observer to
 the detection. The payload contains no opponent identity, range, velocity, or
 confidence. Frame metadata carries the originating teammate id and the
-observation step; the ground-truth opponent id is attached only as privileged
-(never policy-visible) frame metadata for evaluation.
+observation step.
+
+The source accepts both observation layouts the environments produce:
+
+- Legacy visible-opponent position mappings (``red_agents``/``blue_agents``):
+  the bearing payload is computed from the observer and opponent positions,
+  and the ground-truth opponent id is attached as privileged (never
+  policy-visible) frame metadata for evaluation.
+- Bearing-only ``contact_reports`` (``environment.observation.blue_sensor:
+  "bearing_only"``): each report's policy-visible payload IS already the
+  engineered 4-dim bearing report, so it becomes a frame payload unchanged.
+  Reports carry no opponent identity by design, so ``privileged`` stays
+  empty; ground-truth evaluation joins through
+  ``infos[<observer>]["ground_truth_contacts"]`` instead.
 """
 
 from __future__ import annotations
@@ -86,6 +98,14 @@ class EngineeredBearingSource:
     each entry carrying a ``"position"`` pair. Teammate entries such as
     ``"red_teammates"`` are never read. An explicit ``opponent_key`` can
     override the automatic key detection.
+
+    When the observation carries no opponent position mapping but has
+    bearing-only ``"contact_reports"`` (the ``blue_sensor: "bearing_only"``
+    observation contract of :mod:`src.env.sensors`), one frame is built per
+    report directly from its payload, which is already the 4-dim engineered
+    report. Frame order equals report order (the sensor sorts reports by
+    bearing angle, so the order is deterministic). Privileged fields of the
+    observation (e.g. ``"privileged_red_agents"``) are never read.
     """
 
     #: Payload layout of one contact report.
@@ -101,13 +121,19 @@ class EngineeredBearingSource:
         """
         self._opponent_key = opponent_key
 
+    def _opponent_keys(self) -> Sequence[str]:
+        """Return the observation keys tried for the visible-opponent mapping."""
+        return (self._opponent_key,) if self._opponent_key is not None else _OPPONENT_KEYS
+
+    def _has_opponent_mapping(self, observation: Mapping[str, object]) -> bool:
+        """Return whether any visible-opponent position-mapping key is present."""
+        return any(observation.get(key) is not None for key in self._opponent_keys())
+
     def _visible_opponents(
         self, observation: Mapping[str, object], agent_id: str
     ) -> Mapping[str, Mapping[str, object]]:
         """Return the visible-opponent mapping of one observation (may be empty)."""
-        keys: Sequence[str]
-        keys = (self._opponent_key,) if self._opponent_key is not None else _OPPONENT_KEYS
-        for key in keys:
+        for key in self._opponent_keys():
             value = observation.get(key)
             if value is not None:
                 if not isinstance(value, Mapping):
@@ -117,6 +143,89 @@ class EngineeredBearingSource:
                     )
                 return value
         return {}
+
+    def _frames_from_reports(
+        self, agent_id: str, reports: object, step: int
+    ) -> List[Frame]:
+        """Build frames from bearing-only ``contact_reports`` (no positions).
+
+        Each policy-visible report payload is already the engineered 4-dim
+        bearing report ``[observer_x, observer_y, direction_x, direction_y]``
+        (built by :func:`src.env.sensors.build_contact_reports`), so it is
+        placed into a frame unchanged. Frame order equals report order, which
+        the sensor already sorts by bearing angle for determinism.
+
+        Ground-truth opponent identity is not available in policy-visible
+        reports by design, so ``privileged`` is empty; ground-truth
+        evaluation joins through ``infos[<observer>]["ground_truth_contacts"]``
+        (report index -> opponent id, aligned with this frame order) instead.
+
+        Args:
+            agent_id: The observing agent's id (becomes the frame origin).
+            reports: The observation's ``contact_reports`` sequence.
+            step: Current movement-step index (becomes the creation step).
+
+        Returns:
+            One frame per contact report, in report order.
+
+        Raises:
+            ValueError: If ``reports`` is not a sequence of report mappings,
+                a payload is not 4-dimensional, or a report's metadata names
+                a different observer than ``agent_id``.
+        """
+        if isinstance(reports, (str, bytes)) or not isinstance(reports, Sequence):
+            raise ValueError(
+                "Observation['contact_reports'] of agent '{}' must be a sequence of "
+                "report dicts, got {}.".format(agent_id, type(reports).__name__)
+            )
+        frames: List[Frame] = []
+        for index, report in enumerate(reports):
+            if not isinstance(report, Mapping) or "payload" not in report:
+                raise ValueError(
+                    "Contact report {} of agent '{}' must be a mapping with a "
+                    "'payload', got {!r}.".format(index, agent_id, report)
+                )
+            payload = torch.as_tensor(report["payload"], dtype=torch.float32)
+            if payload.dim() != 1 or payload.size(0) != self.PAYLOAD_DIMENSION:
+                raise ValueError(
+                    "Contact report {} of agent '{}' must have a {}-dim payload "
+                    "[observer_x, observer_y, direction_x, direction_y], got shape "
+                    "{}.".format(
+                        index, agent_id, self.PAYLOAD_DIMENSION, tuple(payload.shape)
+                    )
+                )
+            metadata = report.get("metadata")
+            observation_step = step
+            if metadata is not None:
+                if not isinstance(metadata, Mapping):
+                    raise ValueError(
+                        "Contact report {} of agent '{}' has a non-mapping 'metadata' "
+                        "field: {!r}.".format(index, agent_id, metadata)
+                    )
+                observer = metadata.get("observer")
+                if observer is not None and observer != agent_id:
+                    raise ValueError(
+                        "Contact report {} of agent '{}' was observed by '{}'; a "
+                        "source derives outboxes from the agent's OWN local "
+                        "observation only (u_i(t) = g_comm(o_i(t))).".format(
+                            index, agent_id, observer
+                        )
+                    )
+                observation_step = int(metadata.get("step", step))
+            frames.append(
+                Frame(
+                    payload=payload,
+                    origin=agent_id,
+                    created_step=step,
+                    created_round=0,
+                    observation_step=observation_step,
+                    # Reports are anonymous by design: no ground-truth opponent
+                    # id exists to attach. Evaluation joins through the infos
+                    # ground_truth_contacts mapping (see docstring).
+                    privileged={},
+                )
+            )
+        return frames
 
     def build_frames(
         self, agent_id: str, observation: Mapping[str, object], step: int
@@ -129,10 +238,16 @@ class EngineeredBearingSource:
             step: Current movement-step index (becomes the observation step).
 
         Returns:
-            One frame per visible opponent, ordered by opponent id for
-            determinism. Zero-distance detections carry the degenerate
-            direction ``(0.0, 0.0)``.
+            One frame per visible opponent. With a position mapping, frames
+            are ordered by opponent id for determinism and zero-distance
+            detections carry the degenerate direction ``(0.0, 0.0)``. With
+            bearing-only ``contact_reports`` (and no position mapping),
+            frames follow report order and carry no privileged opponent id.
         """
+        if not self._has_opponent_mapping(observation):
+            reports = observation.get("contact_reports")
+            if reports is not None:
+                return self._frames_from_reports(agent_id, reports, step)
         opponents = self._visible_opponents(observation, agent_id)
         if not opponents:
             return []

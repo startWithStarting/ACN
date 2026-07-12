@@ -55,7 +55,10 @@ def main(config_path, train_mode=False, persist=False, database_url=None):
 
     # 1. Create agents based on config
     agents_config = config.get("agents", {})
-    all_agents = create_agents_from_config(agents_config)
+    all_agents = create_agents_from_config(
+        agents_config,
+        action_space_config=config.get("environment", {}).get("action_space"),
+    )
 
     if not all_agents:
         logger.error("No agents defined in the configuration. Exiting.")

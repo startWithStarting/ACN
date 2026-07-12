@@ -18,10 +18,23 @@ Supports all four combinations of the two independent configuration axes from
 TorchRL supplies :class:`~torchrl.objectives.ClipPPOLoss` and GAE over
 TensorDict rollouts; ACN keeps the transition contract, actor assignment,
 critic scope, and the update schedule.
+
+Differentiable communication (``multihop_gnn``): when a
+:class:`GnnCommSettings` is supplied, the shared actor's forward pass becomes
+``local features -> GraphSAGECommunicator over the stored frozen edge_index
+-> per-agent embedding concatenated to local features -> action head``. The
+GNN parameters are part of the actor's optimizer, so encoder, message
+rounds, and action head train jointly end to end. Decentralized execution is
+STRUCTURAL: the communicator's R message-passing rounds cannot move
+information more than R graph hops, so each agent's action depends only on
+its own local features plus messages reachable within R hops — regardless of
+how samples are batched (batching is an implementation optimization, not an
+information permission).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
@@ -33,7 +46,12 @@ from torchrl.modules import ProbabilisticActor, ValueOperator
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 
-from src.training.marl.adapters import PRIVILEGED_STATE_KEY, actions_to_env
+from src.communication.processors.gnn import GraphSAGECommunicator
+from src.training.marl.adapters import (
+    COMMUNICATION_INPUT_KEYS,
+    PRIVILEGED_STATE_KEY,
+    actions_to_env,
+)
 from src.training.marl.buffer import RolloutBuffer
 from src.training.marl.config import TrainingSettings
 from src.training.marl.contract import ActionSelection, OnlineMethod, TeamTransition
@@ -41,7 +59,7 @@ from src.utils.logger import get_logger
 
 logger = get_logger("acn.training.ppo")
 
-__all__ = ["TeamPPO"]
+__all__ = ["GnnCommSettings", "TeamPPO"]
 
 _SHARED_KEY = "__shared__"
 _LOSS_KEYS = ("loss_objective", "loss_critic", "loss_entropy")
@@ -56,6 +74,156 @@ def _mlp(in_dim: int, hidden: int, out_dim: int) -> nn.Sequential:
         nn.Tanh(),
         nn.Linear(hidden, out_dim),
     )
+
+
+@dataclass(frozen=True)
+class GnnCommSettings:
+    """Resolved differentiable-communication hyperparameters for the actor.
+
+    Built from a compiled ``multihop_gnn`` plan's marker processor (the
+    single source of the resolved defaults), so the actor's communicator is
+    parameterized by exactly the plan the environment validated.
+
+    Attributes:
+        message_dim: Output embedding width (``payload.dimension``).
+        hidden_dim: GNN hidden width (``processor.hidden_dimension``).
+        rounds: ``R`` message-passing rounds (= ``processor.layers``).
+        aggregation: Neighbour aggregation (``sum`` reference default).
+        shared_weights: One conv shared across rounds vs one per round.
+    """
+
+    message_dim: int
+    hidden_dim: int
+    rounds: int
+    aggregation: str = "sum"
+    shared_weights: bool = False
+
+    @classmethod
+    def from_plan(cls, plan: Any) -> "GnnCommSettings":
+        """Read the resolved settings off a compiled differentiable plan.
+
+        Args:
+            plan: A :class:`~src.communication.plans.CommunicationPlan` with
+                ``differentiable=True`` whose processor is the
+                :class:`~src.communication.schemes
+                .DifferentiableCommunicationMarker`.
+
+        Returns:
+            The settings for :class:`GraphSAGECommunicator` construction.
+
+        Raises:
+            ValueError: If the plan is not differentiable or its processor
+                does not carry the resolved hyperparameters.
+        """
+        if not getattr(plan, "differentiable", False):
+            raise ValueError(
+                "GnnCommSettings.from_plan needs a differentiable communication plan; "
+                "scripted schemes run in the environment, not in the actor."
+            )
+        marker = plan.processor
+        for attr in ("message_dimension", "hidden_dimension", "rounds", "aggregation",
+                     "shared_weights"):
+            if not hasattr(marker, attr):
+                raise ValueError(
+                    "Differentiable plan's processor carries no resolved {!r}; expected "
+                    "the multihop_gnn marker processor.".format(attr)
+                )
+        return cls(
+            message_dim=int(marker.message_dimension),
+            hidden_dim=int(marker.hidden_dimension),
+            rounds=int(marker.rounds),
+            aggregation=str(marker.aggregation),
+            shared_weights=bool(marker.shared_weights),
+        )
+
+
+class _GnnActorNet(nn.Module):
+    """Actor network with the in-forward-pass GraphSAGE communication stage.
+
+    Forward contract (one sample = one agent at one step): the sample carries
+    its own local ``features`` plus the RAW team node features and frozen
+    edge_index of its step (see
+    :data:`~src.training.marl.adapters.COMMUNICATION_INPUT_KEYS`). The
+    communicator runs over the disjoint union of the per-sample graphs
+    (block-diagonal batching — aggregation never crosses components), each
+    sample keeps only ITS OWN node's embedding, and the action head consumes
+    ``[local features, embedding]``. Per-sample and batched evaluation are
+    therefore mathematically identical.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        num_actions: int,
+        hidden_size: int,
+        comm: GnnCommSettings,
+    ) -> None:
+        super().__init__()
+        self.communicator = GraphSAGECommunicator(
+            in_dim=feature_dim,
+            hidden_dim=comm.hidden_dim,
+            message_dim=comm.message_dim,
+            rounds=comm.rounds,
+            aggregation=comm.aggregation,
+            shared_weights=comm.shared_weights,
+        )
+        self.head = _mlp(feature_dim + comm.message_dim, hidden_size, num_actions)
+
+    def communicate(
+        self,
+        comm_nodes: torch.Tensor,
+        comm_edges: torch.Tensor,
+        comm_num_edges: torch.Tensor,
+        comm_node_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run the communicator for a flat batch of samples.
+
+        Args:
+            comm_nodes: ``[B, N, F]`` team node features per sample.
+            comm_edges: ``[B, 2, E_max]`` zero-padded frozen edge_index.
+            comm_num_edges: ``[B]`` valid edge counts.
+            comm_node_index: ``[B]`` which node each sample is.
+
+        Returns:
+            ``[B, message_dim]`` — each sample's OWN node embedding.
+        """
+        batch, nodes, _feat = comm_nodes.shape
+        x = comm_nodes.reshape(batch * nodes, -1)
+        chunks = []
+        for sample in range(batch):
+            count = int(comm_num_edges[sample])
+            if count > 0:
+                chunks.append(comm_edges[sample, :, :count] + sample * nodes)
+        if chunks:
+            edge_index = torch.cat(chunks, dim=1)
+        else:
+            edge_index = torch.zeros((2, 0), dtype=torch.long, device=x.device)
+        embeddings = self.communicator(x, edge_index)
+        rows = (
+            torch.arange(batch, device=x.device) * nodes
+            + comm_node_index.to(torch.long)
+        )
+        return embeddings[rows]
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        comm_nodes: torch.Tensor,
+        comm_edges: torch.Tensor,
+        comm_num_edges: torch.Tensor,
+        comm_node_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute action logits; accepts any leading batch shape."""
+        lead = features.shape[:-1]
+        flat_features = features.reshape(-1, features.shape[-1])
+        embedding = self.communicate(
+            comm_nodes.reshape(-1, comm_nodes.shape[-2], comm_nodes.shape[-1]),
+            comm_edges.reshape(-1, 2, comm_edges.shape[-1]),
+            comm_num_edges.reshape(-1),
+            comm_node_index.reshape(-1),
+        )
+        logits = self.head(torch.cat([flat_features, embedding], dim=-1))
+        return logits.reshape(*lead, logits.shape[-1])
 
 
 class _Learner:
@@ -102,6 +270,12 @@ class TeamPPO(OnlineMethod):
         feature_dim: Width of the flat policy-input feature vector.
         privileged_dim: Width of the flat privileged-state vector.
         num_actions: Size of the flat ``Discrete(N)`` movement space.
+        comm: Differentiable-communication settings; when supplied the actor
+            runs the GraphSAGE communication stage inside its forward pass
+            and its rollout inputs must carry the
+            :data:`~src.training.marl.adapters.COMMUNICATION_INPUT_KEYS`.
+            ``None`` keeps the plain local-features actor (scripted or
+            env-side communication schemes).
     """
 
     def __init__(
@@ -111,10 +285,12 @@ class TeamPPO(OnlineMethod):
         feature_dim: int,
         privileged_dim: int,
         num_actions: int,
+        comm: Optional[GnnCommSettings] = None,
     ) -> None:
         if not team_names:
             raise ValueError("TeamPPO needs at least one trainable agent.")
         self._settings = settings
+        self._comm = comm
         self._team_names = list(team_names)
         self._feature_dim = int(feature_dim)
         self._privileged_dim = int(privileged_dim)
@@ -139,11 +315,28 @@ class TeamPPO(OnlineMethod):
     # ------------------------------------------------------------------
 
     def _build_actor(self) -> Tuple[ProbabilisticActor, nn.Module]:
-        """Build one categorical actor over the flat discrete movement space."""
-        net = _mlp(self._feature_dim, self._settings.hidden_size, self._num_actions).to(
-            self._device
-        )
-        module = TensorDictModule(net, in_keys=["features"], out_keys=["logits"])
+        """Build one categorical actor over the flat discrete movement space.
+
+        With differentiable communication the network is a
+        :class:`_GnnActorNet` (communicator + head; the GNN parameters join
+        the actor's optimizer through ``net.parameters()``), reading the raw
+        graph inputs alongside the local features. Actors never read the
+        ``privileged_state`` key in either mode.
+        """
+        if self._comm is not None:
+            net: nn.Module = _GnnActorNet(
+                feature_dim=self._feature_dim,
+                num_actions=self._num_actions,
+                hidden_size=self._settings.hidden_size,
+                comm=self._comm,
+            ).to(self._device)
+            in_keys = ["features"] + list(COMMUNICATION_INPUT_KEYS)
+        else:
+            net = _mlp(self._feature_dim, self._settings.hidden_size, self._num_actions).to(
+                self._device
+            )
+            in_keys = ["features"]
+        module = TensorDictModule(net, in_keys=in_keys, out_keys=["logits"])
         actor = ProbabilisticActor(
             module,
             in_keys=["logits"],

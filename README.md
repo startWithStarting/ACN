@@ -11,7 +11,13 @@ ACN is built on [PettingZoo](https://github.com/Farama-Foundation/PettingZoo) an
 * **Blue Agents**: Defensive units with VAR-based prediction models to forecast red agent movements
 * **Red Agents**: Mobile units with configurable movement strategies
 * **Physics Package**: Integrated 2D physics helpers with collisions, drag, obstacles, and force fields
-* **Communication Models**: No-op and placeholder model interfaces for future message passing
+* **Communication**: A synchronous round-based runtime (R rounds per movement step over a
+  frozen same-team radius graph, C-round message cache) with named schemes from engineered
+  one-hop delivery to multi-hop relay and learned GraphSAGE message passing
+* **Limited Sensing**: Config-gated bearing-only blue sensor producing anonymous contact
+  reports, with ground-truth identities preserved for evaluation only
+* **MARL Training**: A TorchRL-backed MAPPO/IPPO trainer (shared/separate actors x
+  local/global critics) that trains exactly one team per run against scripted opponents
 * **Run Traces**: Training-oriented traces for observations, actions, rewards, states, and blue-agent prediction events, written either as local JSONL files or directly to Postgres
 * **Benchmarking**: Scenario-comparison scaffolding and basic metrics
 
@@ -45,23 +51,38 @@ Located in `src/agents/blue_strategies/`:
 | `static` | Remain stationary, continue tracking |
 | `pursuit` | Move toward average predicted red position |
 
-### Communication Models
+### Communication Schemes
 
-Located in `src/communication/`:
+Located in `src/communication/`. Every scheme compiles to a `CommunicationPlan`
+(topology + transport + processor) over one shared synchronous slotted-radius
+transport; delivery semantics never depend on the processing backend:
 
-* `NoCommunicationModel`: Local observations only (baseline)
-* `GNNCommunicationModel`: Placeholder for future graph neural network-based message passing
+| Scheme | Description |
+|--------|-------------|
+| `none` | No communication; agents receive an explicit empty view |
+| `one_hop_direct` | One-hop delivery of engineered bearing reports; distinct inbox preserved |
+| `one_hop_mean` | One-hop delivery + PyG aggregation (mean/sum/max) to one vector per agent |
+| `multihop_relay` | First-seen unchanged packet forwarding with TTL, duplicate suppression, and cross-step carryover (requires cache window >= TTL) |
+| `multihop_gnn` | Learned GraphSAGE message passing (R rounds = R layers), trained end to end inside the actor; never executed by the environment |
+
+See `docs/communication_decision_log.md` for the design record and
+`docs/configuration.md` for the config schema.
 
 ### Training
 
 Located in `src/training/`:
 
-* `Trainer`: MARL training loop integration with Stable-Baselines3
-* `BaseTrainer`: Abstract base for custom trainers
+* `src/training/marl/`: The TorchRL-backed team-selection trainer
+  (`training.backend: "marl"`). One PPO implementation covers shared/separate
+  actors x local/global critics (MAPPO with a privileged central critic is the
+  benchmark default; shared-actor IPPO is the control). Exactly one team is
+  trainable per run (`trainable_team: blue` XOR `red`); the opposing team runs
+  its scripted strategy. Fully seeded, headless, checkpoint/resume-capable.
+* `src/training/trainer.py`: The legacy Stable-Baselines3 PPO path, kept for
+  backward compatibility.
 
-The current training path is a parameter-sharing PPO path for red agents. It does
-not yet implement CTDE, centralized critics, learned communication, or opponent
-modeling.
+Remote training runs on Modal (`infra/`); the same config trains on GPU
+remotely and debugs on CPU locally (`training.device: "auto"`).
 
 ## Quick Start
 
@@ -80,6 +101,15 @@ uv run python run.py --mode parallel --config config/aggressive_config.yaml
 
 # Run AEC mode
 uv run python run.py --mode aec --config config/experiment_config.yaml
+
+# Train (MARL benchmark configs; legacy SB3 configs route automatically)
+uv run python run.py --mode train --config config/benchmark_blue_mappo.yaml
+
+# Remote training on Modal (see infra/README.md for the one-time setup)
+uvx modal run infra/modal_train.py::train --config config/benchmark_blue_mappo.yaml
+
+# Merge gate: lint + full test suite + golden-trace regression
+./scripts/gate.sh
 
 # Inspect one blue agent from a completed run
 uv run python -m src.analysis.blue_history \
@@ -148,16 +178,18 @@ acn/
 │   │   ├── engine.py     # Euler integration, collisions
 │   │   ├── obstacles.py  # Rect, Circle obstacles
 │   │   └── fields.py     # Force fields
-│   ├── communication/    # Message passing
-│   ├── training/         # RL training
+│   ├── communication/    # Schemes, topology, transport, round runtime, processors
+│   ├── training/         # MARL trainer (marl/) + legacy SB3 path
 │   ├── benchmark/        # Performance metrics
 │   ├── analysis/         # Run trace inspection and plotting utilities
 │   ├── api/              # FastAPI trace service
 │   ├── storage/          # Postgres schema, direct persistence, and ingestion utilities
 │   └── utils/            # Logging, config, geometry
-├── config/               # YAML configs
+├── config/               # YAML configs (incl. benchmark_*_mappo.yaml)
 ├── tests/                # Unit tests
 ├── docs/                 # Full documentation
+├── infra/                # Modal remote-training harness
+├── scripts/              # Merge gate + golden-trace harness
 ├── run.py                # Unified entry point
 ├── main.py               # Deprecated AEC wrapper
 └── main_parallel.py      # Deprecated parallel wrapper

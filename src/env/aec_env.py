@@ -98,7 +98,14 @@ class AECGameEnv(AECEnv, ACNEnvironmentLogic):
         """
         Return the observation dictionary for the given agent.
         """
-        return self._get_observation(agent, self.steps)
+        observation = self._get_observation(agent, self.steps)
+        if self.observation_config.bearing_only:
+            # Expose the privileged report-index -> red-name mapping for the
+            # observation just built through infos (read by last() after this).
+            contacts = self._ground_truth_contacts.get(agent)
+            if contacts is not None and agent in self.infos:
+                self.infos[agent]['ground_truth_contacts'] = contacts
+        return observation
 
     def reset(self, seed=None, options=None):
         """

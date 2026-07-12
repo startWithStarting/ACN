@@ -139,6 +139,47 @@ Supported keys used by the current environments:
 * `action_space`: Movement action-space selection (see Action Space
   Configuration below)
 
+### Observation Configuration
+
+The `environment.observation` section gates the blue sensor model. An absent
+block reproduces current behavior exactly.
+
+Supported keys:
+
+* `blue_sensor`: `"legacy"` (default) or `"bearing_only"`.
+  * `legacy`: blue observations carry the historical `red_agents` dict of
+    visible red positions and distances.
+  * `bearing_only`: blue observations replace `red_agents` with
+    `contact_reports`, a variable-size list with one anonymous report per red
+    inside the observer's `detection_radius`. Each report is
+    `{"payload": [observer_x, observer_y, direction_x, direction_y],
+    "metadata": {"observer": <blue name>, "step": <t>}}`, where the direction
+    is the global-frame unit vector toward the red (`cos`/`sin` of the
+    bearing). No red identity, position, range, or velocity appears in any
+    policy-visible field; missing contacts mean not-visible. Reports are
+    sorted by bearing angle so traces are reproducible without revealing
+    which red produced which report. The simulator retains per-report red
+    identity outside the observation: the step/reset `infos` dict carries
+    `infos[<blue name>]["ground_truth_contacts"]` (report index -> red name,
+    aligned with the report order) for tracking metrics and evaluation. Red
+    team observations are unchanged.
+* `scripted_blue_privileged`: Defaults to `true`; only meaningful with
+  `blue_sensor: bearing_only`. When true, blue observations additionally carry
+  `privileged_red_agents` (the legacy dict) so scripted blue controllers such
+  as the VAR pursuit blue keep working. This field is for scripted controllers
+  and traces only — learned policies must never consume it (enforced later at
+  the trainer boundary). Set to `false` for the strict limited-sensing
+  contract with no privileged fields in the observation.
+
+Example:
+
+```yaml
+environment:
+  observation:
+    blue_sensor: "bearing_only"
+    scripted_blue_privileged: true
+```
+
 ## Analysis Configuration
 
 The `analysis` section controls trace recording and expensive derived plots.

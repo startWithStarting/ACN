@@ -12,6 +12,7 @@ from src.agents.action_spaces import (
     ActionSpaceConfig,
     build_discrete_movement_spec,
 )
+from src.env.sensors import ObservationConfig, build_contact_reports
 from src.physics.engine import PhysicsEngine
 from src.physics.fields import create_force_field
 from src.physics.obstacles import create_obstacle
@@ -105,6 +106,16 @@ class ACNEnvironmentLogic:
         self.physics_dt = float(self.physics_config.get("dt", 1.0))
         self.physics_engine = None
 
+        # --- Observation / Sensor Configuration ---
+        # environment.observation gates the blue sensor model; the default
+        # ("legacy") reproduces historical observations exactly.
+        self.observation_config = ObservationConfig.from_dict(self.env_config.get("observation"))
+        # Privileged per-report red identities from the latest bearing-only
+        # blue observations: {blue_name: {report_index: red_name}}. Exposed
+        # only through the step/reset infos dict, never through the
+        # policy-visible observation.
+        self._ground_truth_contacts = {}
+
     def _distribute_agents(self):
         """Categorize agents into red and blue lists."""
         self.red_agents = []
@@ -146,9 +157,12 @@ class ACNEnvironmentLogic:
         - Flocking Red Agents: Start in top-left corner.
         - Others: Random distribution.
         """
+        # Drop privileged sensor state from any previous episode.
+        self._ground_truth_contacts = {}
+
         for agent_obj in self.agent_objects.values():
             agent_obj.is_active = True
-            
+
             # Default to full random distribution
             x = random.uniform(0, self.grid_width)
             y = random.uniform(0, self.grid_height)
@@ -203,14 +217,17 @@ class ACNEnvironmentLogic:
             'timestamp': step_count
         }
         
-        # If agent is a BlueAgent, add red_agents info
+        # If agent is a BlueAgent, add red-contact info in the configured sensor mode
         if hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'blue':
-            red_agents_info = {}
-            for red_agent in self.active_red_agents:
-                visible_info = self._visible_agent_info(agent_obj, red_agent)
-                if visible_info is not None:
-                    red_agents_info[red_agent.name] = visible_info
-            observation['red_agents'] = red_agents_info
+            if self.observation_config.bearing_only:
+                self._build_blue_bearing_observation(agent_name, agent_obj, observation, step_count)
+            else:
+                red_agents_info = {}
+                for red_agent in self.active_red_agents:
+                    visible_info = self._visible_agent_info(agent_obj, red_agent)
+                    if visible_info is not None:
+                        red_agents_info[red_agent.name] = visible_info
+                observation['red_agents'] = red_agents_info
         
         # If agent is a RedAgent, add blue_agents info and red_teammates info
         elif hasattr(agent_obj, 'agent_type') and getattr(agent_obj.agent_type, 'value', None) == 'red':
@@ -273,6 +290,50 @@ class ACNEnvironmentLogic:
             "position": target_pos,
             "distance": distance,
         }
+
+    def _build_blue_bearing_observation(self, agent_name, agent_obj, observation, step_count):
+        """Attach bearing-only contact reports to a blue agent's observation.
+
+        Adds the policy-visible 'contact_reports' list (anonymous, sorted by
+        bearing angle) and records the privileged report-index -> red-name
+        mapping for the infos dict. When the environment grants scripted
+        controllers privileged access, the legacy red dict is also attached
+        as 'privileged_red_agents' (trace/scripted-only; learned policies
+        must never consume it).
+        """
+        visible_reds = []
+        privileged_info = {}
+        for red_agent in self.active_red_agents:
+            visible_info = self._visible_agent_info(agent_obj, red_agent)
+            if visible_info is not None:
+                visible_reds.append((red_agent.name, visible_info["position"]))
+                privileged_info[red_agent.name] = visible_info
+
+        reports, ground_truth = build_contact_reports(
+            agent_name,
+            (agent_obj.x, agent_obj.y),
+            visible_reds,
+            step_count,
+        )
+        observation['contact_reports'] = reports
+        self._ground_truth_contacts[agent_name] = ground_truth
+        if self.observation_config.scripted_blue_privileged:
+            observation['privileged_red_agents'] = privileged_info
+
+    def _attach_ground_truth_infos(self, infos):
+        """Expose per-report red identities through infos in bearing-only mode.
+
+        For every blue agent with a freshly built bearing-only observation,
+        sets infos[blue_name]['ground_truth_contacts'] to the report-index ->
+        red-name mapping aligned with that observation's report order. No-op
+        in legacy mode.
+        """
+        if not self.observation_config.bearing_only:
+            return
+        for agent_name, contacts in self._ground_truth_contacts.items():
+            agent_infos = infos.get(agent_name)
+            if agent_infos is not None:
+                agent_infos['ground_truth_contacts'] = contacts
 
     def _is_red_agent_detected(self, red_agent):
         """Check if a red agent is detected by any active blue agent."""

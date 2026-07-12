@@ -282,7 +282,16 @@ class BlueAgent(BaseAgent):
         """
         # Process observation if available
         if observation is not None:
-            red_agents = observation.get('red_agents', {})
+            red_agents = observation.get('red_agents')
+            if red_agents is None:
+                # Bearing-only sensor mode removes 'red_agents' from the
+                # policy-visible observation. Scripted blues (VAR pursuit)
+                # keep privileged position access through
+                # 'privileged_red_agents' when the environment grants it
+                # (environment.observation.scripted_blue_privileged). Learned
+                # policies must never consume that field; in strict mode it is
+                # absent and this agent simply records no red positions.
+                red_agents = observation.get('privileged_red_agents', {})
             timestamp = observation.get('timestamp', 0.0)
             
             # Record movements of Red agents within detection radius

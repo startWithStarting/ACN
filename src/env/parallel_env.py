@@ -146,18 +146,24 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
             self._advance_physics()
         
         # 2. Calculate rewards (after all have moved)
-        for agent_name in self.agents:
-            agent_obj = self.agent_objects[agent_name]
-            # Use shared reward calculation
-            # Note: _calculate_reward logic assumes 'red' scores if near center and unseen
-            # Does this logic hold if all moved at once? Yes, we check detection based on new positions.
-            r, scored = self._calculate_reward(agent_name, agent_obj)
-            rewards[agent_name] = r
-            if scored:
-                red_scored_this_step = True
-                
-        # 3. Apply team penalty/bonus (if no red scored, blue gets reward)
-        if not red_scored_this_step:
+        if self.reward_settings.benchmark_enabled:
+            # Config-gated benchmark modes: one detection state per step is
+            # shared by both teams' rewards (see src/env/rewards.py).
+            red_scored_this_step = self._apply_benchmark_rewards(rewards)
+        else:
+            for agent_name in self.agents:
+                agent_obj = self.agent_objects[agent_name]
+                # Use shared reward calculation
+                # Note: _calculate_reward logic assumes 'red' scores if near center and unseen
+                # Does this logic hold if all moved at once? Yes, we check detection based on new positions.
+                r, scored = self._calculate_reward(agent_name, agent_obj)
+                rewards[agent_name] = r
+                if scored:
+                    red_scored_this_step = True
+
+        # 3. Apply team penalty/bonus (if no red scored, blue gets reward).
+        # The benchmark blue reward REPLACES the passive bonus (never both).
+        if not self.reward_settings.blue_benchmark and not red_scored_this_step:
             for blue_agent in self.active_blue_agents:
                 if blue_agent.name in rewards:
                     rewards[blue_agent.name] += BLUE_AGENT_PASSIVE_REWARD

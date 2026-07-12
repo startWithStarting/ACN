@@ -47,7 +47,15 @@ class AECGameEnv(AECEnv, ACNEnvironmentLogic):
         
         # Initialize common logic (grid, gifs, lists)
         self._init_common()
-        
+
+        if self.reward_settings.benchmark_enabled:
+            raise NotImplementedError(
+                "Benchmark reward modes (environment.reward blue/red = 'benchmark') are not "
+                "supported by the AEC environment: per-agent turns cannot reproduce the "
+                "once-per-step shared detection-state semantics without faking them. "
+                "Run with --mode parallel, or keep both reward modes 'legacy'."
+            )
+
         self.max_cycles = env_config.get("max_cycles", 10)
         
         # Initialize agent positions randomly

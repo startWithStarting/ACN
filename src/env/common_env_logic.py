@@ -10,6 +10,13 @@ from gymnasium.spaces import Box, Dict as GymDict
 from src.physics.engine import PhysicsEngine
 from src.physics.fields import create_force_field
 from src.physics.obstacles import create_obstacle
+from src.env.rewards import (
+    blue_benchmark_reward,
+    build_detection_state,
+    parse_reward_settings,
+    red_benchmark_reward,
+    ring_potential,
+)
 from src.utils.geometry import calculate_distance
 
 # Constants
@@ -90,6 +97,13 @@ class ACNEnvironmentLogic:
         self.physics_dt = float(self.physics_config.get("dt", 1.0))
         self.physics_engine = None
 
+        # --- Reward Configuration (benchmark modes are opt-in; default is legacy) ---
+        self.reward_settings = parse_reward_settings(self.env_config.get("reward"))
+        # Per-episode state owned by the env for the benchmark reward modes.
+        self._red_pin_streaks = {}
+        self._red_ring_potentials = {}
+        self._initial_red_count = 0
+
     def _distribute_agents(self):
         """Categorize agents into red and blue lists."""
         self.red_agents = []
@@ -155,6 +169,7 @@ class ACNEnvironmentLogic:
             agent_obj.direction = (0.0, 0.0)
 
         self._init_physics_engine()
+        self._reset_benchmark_reward_state()
 
     def _update_active_agents(self):
         """Update the lists of active red and blue agents."""
@@ -551,8 +566,104 @@ class ACNEnvironmentLogic:
                 if not self._is_red_agent_detected(agent_obj):
                     reward = 1
                     red_scored = True
-        
+
         return reward, red_scored
+
+    def _reset_benchmark_reward_state(self):
+        """Reset the per-episode reward state the env owns for benchmark modes.
+
+        Clears the pinned-streak counters, re-anchors the ring potentials to the
+        agents' (freshly reset) positions, and records the initial red count
+        used to normalize the blue scoring penalty.
+        """
+        self._red_pin_streaks = {}
+        self._red_ring_potentials = {}
+        self._initial_red_count = len(self.red_agents)
+        if self.reward_settings.red_benchmark:
+            center = (self.grid_width / 2, self.grid_height / 2)
+            for red_agent in self.red_agents:
+                if getattr(red_agent, "x", None) is None or getattr(red_agent, "y", None) is None:
+                    continue
+                self._red_ring_potentials[red_agent.name] = ring_potential(
+                    (red_agent.x, red_agent.y), center, REWARD_ATTRACTOR_DISTANCE
+                )
+
+    def _apply_benchmark_rewards(self, rewards):
+        """Compute config-gated benchmark rewards for one simultaneous step.
+
+        Builds the detection state ONCE for the step and shares it between the
+        blue and red benchmark rewards. Teams left in legacy mode keep their
+        legacy per-agent reward; the legacy passive blue bonus is applied by the
+        caller and only when blue mode is legacy (the benchmark blue reward
+        replaces it).
+
+        Args:
+            rewards: Mutable dict of agent name -> reward for agents in
+                ``self.agents``; updated in place.
+
+        Returns:
+            bool: True if any red newly scored this step (on the attractor ring
+            and undetected), matching the legacy scoring event.
+        """
+        settings = self.reward_settings
+        state = build_detection_state(
+            self.active_blue_agents, self.active_red_agents, self._red_pin_streaks
+        )
+        self._red_pin_streaks = dict(state.streaks)
+
+        center = (self.grid_width / 2, self.grid_height / 2)
+        on_ring = {}
+        new_potentials = {}
+        for red_agent in self.active_red_agents:
+            if getattr(red_agent, "x", None) is None or getattr(red_agent, "y", None) is None:
+                continue
+            distance_to_center = np.sqrt(
+                (red_agent.x - center[0]) ** 2 + (red_agent.y - center[1]) ** 2
+            )
+            band_offset = abs(distance_to_center - REWARD_ATTRACTOR_DISTANCE)
+            on_ring[red_agent.name] = band_offset <= REWARD_ATTRACTOR_TOLERANCE
+            new_potentials[red_agent.name] = -band_offset
+
+        # Newly scoring reds this step (per-step ring semantics: every scoring
+        # step counts). k == 0 is exactly the legacy "undetected" test.
+        scoring_reds = {
+            name
+            for name in state.red_names
+            if on_ring.get(name, False) and state.k.get(name, 0) == 0
+        }
+        red_scored_this_step = bool(scoring_reds)
+        red_score_fraction = (
+            len(scoring_reds) / self._initial_red_count if self._initial_red_count else 0.0
+        )
+
+        for agent_name in self.agents:
+            agent_obj = self.agent_objects[agent_name]
+            agent_type = getattr(agent_obj.agent_type, "value", None)
+            if agent_type == "red":
+                if settings.red_benchmark:
+                    if agent_name in new_potentials:
+                        previous_phi = self._red_ring_potentials.get(
+                            agent_name, new_potentials[agent_name]
+                        )
+                        rewards[agent_name] = red_benchmark_reward(
+                            agent_name,
+                            state,
+                            on_ring.get(agent_name, False),
+                            new_potentials[agent_name] - previous_phi,
+                            settings,
+                        )
+                    else:
+                        rewards[agent_name] = 0.0
+                else:
+                    reward, _scored = self._calculate_reward(agent_name, agent_obj)
+                    rewards[agent_name] = reward
+            elif agent_type == "blue" and settings.blue_benchmark:
+                rewards[agent_name] = blue_benchmark_reward(
+                    agent_name, state, red_score_fraction, settings
+                )
+
+        self._red_ring_potentials.update(new_potentials)
+        return red_scored_this_step
 
     # --- Rendering Methods ---
     def render(self):

@@ -39,6 +39,12 @@ packages = ["src"]
 line-length = 100
 target-version = "py39"
 
+[tool.ruff.lint.per-file-ignores]
+# Entry points deliberately run load_dotenv()/warnings setup before imports.
+"main.py" = ["E402"]
+"main_parallel.py" = ["E402"]
+"run.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.9"
 ignore_missing_imports = true

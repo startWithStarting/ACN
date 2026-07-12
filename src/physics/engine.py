@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from enum import Enum
 
 from src.utils.logger import get_logger
@@ -140,9 +140,9 @@ class PhysicsEngine:
     def step(self, dt: float = 1.0) -> None:
         """Advance physics simulation by one time step."""
         # Apply force fields
-        for field in self._force_fields:
+        for force_field in self._force_fields:
             for body in self._bodies.values():
-                field_force = field.force_at(body.position)
+                field_force = force_field.force_at(body.position)
                 body.acceleration += field_force / body.mass
 
         # Update each body
@@ -166,7 +166,6 @@ class PhysicsEngine:
 
         # Apply turning rate limit (heading change)
         if body.turning_rate < float('inf'):
-            current_heading = np.arctan2(body.velocity[1], body.velocity[0])
             # For simplicity, we'll just clamp speed for now
             # Full turning rate implementation would track heading separately
             pass

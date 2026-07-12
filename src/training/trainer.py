@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import gymnasium
-import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.callbacks import CheckpointCallback

@@ -22,7 +22,6 @@ def center_based_movement_strategy(current_pos: Optional[Tuple[float, float]],
                          and 'speed' (integer). Returns default action if info is missing.
     """
     default_direction = np.array([0.0, 0.0], dtype=np.float32)
-    default_speed = 0  # Default is to stay still
     min_distance = 10.0  # Minimum distance to maintain from the center
 
     if current_pos is None or grid_center is None:

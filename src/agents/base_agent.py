@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Tuple, Optional # For type hinting
 
 class AgentType(Enum):
     """Enumeration for different agent types."""
@@ -7,10 +8,6 @@ class AgentType(Enum):
 class CommsType(Enum):
     CENT = 'centralised'
     DIST = 'distributed'
-
-import numpy as np # Import numpy for vector operations if needed later
-from typing import Tuple, Optional # For type hinting
-import gymnasium.spaces as spaces # Import gymnasium spaces
 
 class BaseAgent:
     """

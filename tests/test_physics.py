@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from src.physics.engine import PhysicsEngine, BoundaryMode
+from src.physics.engine import PhysicsEngine
 from src.physics.obstacles import RectObstacle, CircleObstacle
 from src.physics.fields import AttractorField, FlowField
 
@@ -110,7 +110,6 @@ class TestPhysicsEngine(unittest.TestCase):
 
         # Agents should have collided and changed velocities
         vel1 = self.engine.get_velocity("agent1")
-        vel2 = self.engine.get_velocity("agent2")
 
         # Both should have non-zero velocity after collision
         self.assertFalse(np.allclose(vel1, [1.0, 0.0]))

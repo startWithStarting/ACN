@@ -1,19 +1,14 @@
 import functools
 import random
 import os
-import io
-import imageio.v2 as imageio 
 
 import pygame
-import gymnasium
 import numpy as np
-from gymnasium.spaces import Discrete, Box, Dict as GymDict
 
 from pettingzoo.utils.agent_selector import AgentSelector
-from pettingzoo.utils import wrappers 
 from pettingzoo.utils.env import AECEnv
 
-from src.agents.base_agent import BaseAgent, AgentType 
+from src.agents.base_agent import BaseAgent 
 from src.env.common_env_logic import ACNEnvironmentLogic, BLUE_AGENT_PASSIVE_REWARD
 
 def env(**kwargs):

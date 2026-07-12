@@ -1,12 +1,12 @@
 import numpy as np
-from typing import Tuple, Dict, Any
+from typing import Tuple
 from collections import defaultdict
 
-from .base_agent import BaseAgent, AgentType, CommsType
+from .base_agent import BaseAgent, AgentType
 from .registry import register_agent
 import gymnasium.spaces as spaces
 
-from ..utils.geometry import calculate_distance, is_within_detection_radius
+from ..utils.geometry import is_within_detection_radius
 
 # Import all available strategies
 from .strategies.red_agent_strategy import center_based_movement_strategy

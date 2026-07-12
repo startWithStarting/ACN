@@ -1,7 +1,6 @@
 """Tests for benchmark module."""
 
 import unittest
-import os
 import tempfile
 import shutil
 
@@ -11,7 +10,7 @@ from src.benchmark.metrics import (
     calculate_metrics,
     convergence_speed,
 )
-from src.benchmark.runner import BenchmarkRunner, Scenario
+from src.benchmark.runner import Scenario
 
 
 class TestMetrics(unittest.TestCase):

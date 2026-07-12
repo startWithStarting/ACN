@@ -1,7 +1,6 @@
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple
 
-from src.utils.geometry import calculate_distance, is_within_detection_radius
 from ..registry import register_strategy
 
 

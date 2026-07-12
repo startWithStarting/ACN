@@ -16,9 +16,8 @@ import csv
 import json
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
-import numpy as np
 
 from src.utils.logger import get_logger
 

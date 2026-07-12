@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 from collections import defaultdict
 import gymnasium.spaces as spaces
@@ -6,7 +6,7 @@ import gymnasium.spaces as spaces
 from .base_agent import BaseAgent, AgentType
 from .registry import register_agent
 from ..utils.regressor import VectorAutoRegressor
-from ..utils.geometry import calculate_distance, is_within_detection_radius
+from ..utils.geometry import is_within_detection_radius
 from ..utils.logger import get_logger
 
 # Import blue agent strategies
@@ -221,7 +221,6 @@ class BlueAgent(BaseAgent):
             velocity = recent_positions[-1] - recent_positions[-2]
             
             # Project forward
-            preds = []
             curr = recent_positions[-1].copy()
             for _ in range(steps_ahead):
                 curr += velocity
@@ -262,7 +261,7 @@ class BlueAgent(BaseAgent):
             y = max(0.0, min(y, self.grid_size[1]))
             
             return (x, y)
-        except Exception as e:
+        except Exception:
             # Logging handled by logger.warning in the except block
             last_pos, _ = observations[-1]
             return last_pos

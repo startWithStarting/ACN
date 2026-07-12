@@ -578,7 +578,8 @@ class ACNEnvironmentLogic:
             max_dim = max(self.grid_width, self.grid_height)
             target_size = 800
             self.window_scale = max(1, target_size // max_dim)
-            if self.window_scale < 1: self.window_scale = 1 # Safety
+            if self.window_scale < 1:
+                self.window_scale = 1  # Safety
             
             self.window_width = int(self.grid_width * self.window_scale)
             self.window_height = int(self.grid_height * self.window_scale)

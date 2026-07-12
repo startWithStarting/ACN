@@ -173,8 +173,7 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         self.truncations.update(truncations)
                 
         # Update scores for plotting
-        red_scores = [rewards[name] for name in self.agents if name in self.red_agents] 
-        # Note: 'rewards' assumes instantaneous reward. _cumulative_rewards update is handled by PZ mostly? 
+        # Note: 'rewards' assumes instantaneous reward. _cumulative_rewards update is handled by PZ mostly?
         # ParallelEnv doesn't auto-sum rewards in a property like AECEnv does. We track it manually for plotting if needed.
         # But we need self.red_team_scores for the renderer.
         

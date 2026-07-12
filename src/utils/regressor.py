@@ -1,4 +1,3 @@
-import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import LinearRegression
 from sklearn.multioutput import MultiOutputRegressor

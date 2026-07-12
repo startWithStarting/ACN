@@ -1,7 +1,7 @@
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple
 
-from src.utils.geometry import calculate_distance, is_within_detection_radius
+from src.utils.geometry import is_within_detection_radius
 from ..registry import register_strategy
 
 
@@ -35,7 +35,6 @@ def team_based_red_strategy(current_pos: Optional[Tuple[float, float]],
                          and 'speed' (integer).
     """
     default_direction = np.array([0.0, 0.0], dtype=np.float32)
-    default_speed = 0  # Default is to stay still
     min_distance = 10.0  # Minimum distance to maintain from the center
 
     if current_pos is None or grid_center is None:

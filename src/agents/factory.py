@@ -1,6 +1,6 @@
 """Agent factory for creating agents from configuration."""
 
-from typing import Optional, Tuple
+from typing import Optional
 
 from src.agents.red_agent import RedAgent
 from src.agents.blue_agent import BlueAgent

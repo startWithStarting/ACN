@@ -1,9 +1,10 @@
 import unittest
 import numpy as np
 from unittest.mock import patch
-from gymnasium.spaces import Dict, Box, Discrete
+from gymnasium.spaces import Dict, Box
 
-from src.agents.red_agent import RedAgent, AgentType, CommsType
+from src.agents.base_agent import AgentType, CommsType
+from src.agents.red_agent import RedAgent
 
 class TestRedAgent(unittest.TestCase):
     def setUp(self):

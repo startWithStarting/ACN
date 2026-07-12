@@ -46,7 +46,6 @@ def configure_logging(config: Optional[dict] = None) -> None:
     # Remove default sink to avoid duplicate output
     logger.remove()
 
-    level = config.get("level", "INFO")
     file_level = config.get("file_level", "DEBUG")
     console_level = config.get("console_level", "WARNING")
     log_dir = config.get("log_dir", "logs")

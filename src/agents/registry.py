@@ -22,7 +22,7 @@ Example:
         strategy_fn = get_strategy("my_strategy", side="red")
 """
 
-from typing import Callable, Dict, Optional, Type, Any
+from typing import Callable, Dict, Optional, Type
 
 from src.agents.base_agent import BaseAgent
 from src.utils.logger import get_logger

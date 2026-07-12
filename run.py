@@ -15,7 +15,6 @@ Usage:
 import argparse
 import os
 import sys
-import warnings
 from typing import Optional
 from dotenv import load_dotenv
 

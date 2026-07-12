@@ -43,7 +43,14 @@ DELIVERY_RECORD_TYPE = "communication_delivery"
 RELAY_RECORD_TYPE = "communication_relay"
 
 #: Valid ``decision`` values of a relay decision record.
-RELAY_DECISIONS = ("delivered", "dropped_duplicate", "dropped_ttl", "forwarded")
+RELAY_DECISIONS = (
+    "delivered",
+    "dropped_duplicate",
+    "dropped_ttl",
+    "forwarded",
+    "dropped_no_target",
+    "dropped_off_graph",
+)
 
 
 def communication_graph_record(
@@ -145,7 +152,7 @@ def relay_decision_record(
     message_id: int,
     origin: str,
     sender: str,
-    receiver: str,
+    receiver: Optional[str],
     previous_hop: str,
     ttl: int,
     scheme: Optional[str] = None,
@@ -169,10 +176,22 @@ def relay_decision_record(
       intended forward target, and ``previous_hop`` the agent the forwarder
       received the message from (excluded from the target set). ``round`` is
       the round in which the forwarded copy is transmitted.
+    - ``dropped_no_target``: a queued forward was consumed without ever being
+      transmitted because previous-hop exclusion left no valid target (e.g.
+      an isolated bidirectional pair). ``sender`` is the would-be forwarder
+      and ``receiver`` is ``None`` (nothing was addressed).
+    - ``dropped_off_graph``: a queued forward was consumed without ever being
+      transmitted because the forwarder or the message origin is no longer on
+      the current graph (agents may leave between movement steps while a
+      cross-step carryover is pending). ``sender`` is the would-be forwarder
+      and ``receiver`` is ``None``.
 
-    ``ttl`` is always the remaining hop budget carried by the copy *after*
-    the recorded transmission/arrival, so the ``forwarded`` record of a copy
-    and the delivery-side record of its arrival report the same value.
+    ``ttl`` is the remaining hop budget carried by the copy *after* the
+    recorded transmission/arrival, so the ``forwarded`` record of a copy and
+    the delivery-side record of its arrival report the same value. For the
+    consumed-without-transmission drops (``dropped_no_target`` /
+    ``dropped_off_graph``) no transmission occurred, so ``ttl`` is the budget
+    the frame still held when it was consumed.
 
     Args:
         decision: One of :data:`RELAY_DECISIONS`.
@@ -181,7 +200,8 @@ def relay_decision_record(
         message_id: Stable transport identity of the message.
         origin: Agent id of the message's original source.
         sender: Immediate sender (delivery-side) or forwarder (``forwarded``).
-        receiver: Receiving agent (delivery-side) or forward target.
+        receiver: Receiving agent (delivery-side) or forward target; ``None``
+            for the consumed-without-transmission drop decisions.
         previous_hop: The copy's previous hop at the deciding agent.
         ttl: Remaining hop budget after this transmission/arrival.
         scheme: The communication scheme name.

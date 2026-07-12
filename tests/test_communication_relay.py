@@ -4,8 +4,9 @@ Covers the acceptance criteria of docs/communication_implementation_plan.md
 ("Phase 3: Multi-Hop Unchanged Relay") against the live runtime: one hop per
 round, duplicate suppression under cycles, TTL exhaustion, previous-hop
 exclusion, origin vs immediate sender, byte-identical payloads end to end,
-cross-step continuation when ``TTL > R``, the ``C == TTL`` window boundary,
-input-order determinism, scheme compilation, and env integration.
+cross-step continuation when ``TTL > R``, agents leaving the graph while a
+carryover is pending, the ``C == TTL`` window boundary, input-order
+determinism, scheme compilation, and env integration.
 """
 
 import json
@@ -278,6 +279,24 @@ class TestPreviousHopExclusion(unittest.TestCase):
         )
         self.assertEqual(follow_up.delivered_messages.num_messages, 0)
 
+    def test_the_no_target_drop_is_traced(self):
+        runtime = relay_runtime(rounds=2, ttl=2, cache_window=2)
+        result = runtime.run_step(
+            local_observations={},
+            outboxes={"A": [source_frame(PAYLOAD, "A")]},
+            step=0,
+            agents=agents_from_positions(PAIR_POSITIONS, PAIR_RADIUS),
+        )
+        dropped = relay_records(result, "dropped_no_target")
+        self.assertEqual(len(dropped), 1)
+        record = dropped[0]
+        self.assertEqual(record["sender"], "B")
+        self.assertIsNone(record["receiver"])
+        self.assertEqual(record["previous_hop"], "A")
+        self.assertEqual(record["origin"], "A")
+        self.assertEqual(record["round"], 1)
+        self.assertEqual(record["ttl"], 1)  # The budget the frame still held.
+
 
 class TestCrossStepContinuation(unittest.TestCase):
     """TTL > R: the relay continues over the movement-step boundary."""
@@ -332,6 +351,64 @@ class TestCrossStepContinuation(unittest.TestCase):
             local_observations={}, outboxes={}, step=0, agents=self.agents
         )
         self.assertEqual(fresh.delivered_messages.num_messages, 0)
+
+
+class TestAgentLeavesGraphMidRelay(unittest.TestCase):
+    """A pending cross-step carryover survives agents leaving the graph.
+
+    4-line A-B-C-D with R=2, TTL=3, C=3: step 0 leaves C holding a queued
+    forward of A's message for step 1. If the frame's origin (A) or its
+    forwarder (C) is not on step 1's graph, the forward must be consumed
+    with a traced drop — not crash the transport (which can encode neither
+    an off-graph origin nor an off-graph sender).
+    """
+
+    def _step0(self, runtime, agents):
+        return runtime.run_step(
+            local_observations={},
+            outboxes={"A": [source_frame(PAYLOAD, "A")]},
+            step=0,
+            agents=agents,
+        )
+
+    def test_origin_departure_drops_the_carried_forward_without_crashing(self):
+        runtime = relay_runtime(rounds=2, ttl=3, cache_window=3)
+        agents = agents_from_positions(LINE4_POSITIONS, LINE4_RADIUS)
+        self._step0(runtime, agents)
+        without_a = [agent for agent in agents if agent.name != "A"]
+        step1 = runtime.run_step(
+            local_observations={}, outboxes={}, step=1, agents=without_a
+        )
+        self.assertEqual(step1.delivered_messages.num_messages, 0)
+        self.assertEqual(step1.agent_output["D"].num_messages, 0)
+        dropped = relay_records(step1, "dropped_off_graph")
+        self.assertEqual(len(dropped), 1)
+        record = dropped[0]
+        self.assertEqual(record["origin"], "A")
+        self.assertEqual(record["sender"], "C")
+        self.assertIsNone(record["receiver"])
+        self.assertEqual(record["previous_hop"], "B")
+        self.assertEqual(record["step"], 1)
+        self.assertEqual(record["round"], 0)
+        # The frame was consumed for good: nothing re-emerges when A returns.
+        step2 = runtime.run_step(
+            local_observations={}, outboxes={}, step=2, agents=agents
+        )
+        self.assertEqual(step2.delivered_messages.num_messages, 0)
+
+    def test_forwarder_departure_drops_the_carried_forward_with_a_trace(self):
+        runtime = relay_runtime(rounds=2, ttl=3, cache_window=3)
+        agents = agents_from_positions(LINE4_POSITIONS, LINE4_RADIUS)
+        self._step0(runtime, agents)
+        without_c = [agent for agent in agents if agent.name != "C"]
+        step1 = runtime.run_step(
+            local_observations={}, outboxes={}, step=1, agents=without_c
+        )
+        self.assertEqual(step1.delivered_messages.num_messages, 0)
+        dropped = relay_records(step1, "dropped_off_graph")
+        self.assertEqual(len(dropped), 1)
+        self.assertEqual(dropped[0]["sender"], "C")
+        self.assertEqual(dropped[0]["origin"], "A")
 
 
 class TestCacheWindowBoundary(unittest.TestCase):

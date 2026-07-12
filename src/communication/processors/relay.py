@@ -29,17 +29,20 @@ Previous-hop exclusion under the broadcast transport:
 The slotted transport is broadcast-only — an emitted frame is copied to
 *every* valid out-edge of its sender. The relay therefore excludes the
 previous hop in two layers: when the previous hop is the only out-neighbour
-(e.g. an isolated ``A<->B`` pair), the frame is not emitted at all, so no
-ping-pong transmission ever occurs; when other targets exist, the frame is
-emitted (and traced as ``forwarded`` per intended target), and the broadcast
-copy physically reaching the previous hop is suppressed at delivery as a
-guaranteed duplicate (the previous hop has, by construction, already seen the
-message).
+(e.g. an isolated ``A<->B`` pair), the frame is not emitted at all (traced as
+``dropped_no_target``), so no ping-pong transmission ever occurs; when other
+targets exist, the frame is emitted (and traced as ``forwarded`` per intended
+target), and the broadcast copy physically reaching the previous hop is
+suppressed at delivery as a guaranteed duplicate (the previous hop has, by
+construction, already seen the message).
 
 Cross-step continuation and the cache window:
 
 Frames enqueued in the LAST round of movement step ``t`` have their "next
-round" at round 0 of step ``t + 1``. That queue and the duplicate cache live
+round" at round 0 of step ``t + 1``. Because agents may leave the graph
+between steps, a carried frame whose forwarder OR origin is no longer a node
+of the new step's graph is consumed with a traced ``dropped_off_graph``
+(the transport can encode neither). That queue and the duplicate cache live
 in a :class:`RelayState` shared by the processor and the
 :class:`RelayCarryoverTransport`, *beside* the per-agent
 :class:`~src.communication.types.MessageCache`: the duplicate-suppression
@@ -180,23 +183,41 @@ def _emit_queued(
         round_index: Round (within ``step``) in which the frames transmit.
         ttl: The scheme's total hop budget (for the records' remaining ttl).
         scheme: Scheme name recorded on trace records.
-        trace_sink: Mutable list receiving the ``forwarded`` records.
+        trace_sink: Mutable list receiving the ``forwarded`` and drop records.
 
     Returns:
         Outboxes for the transport, keyed by forwarding agent id. Frames
-        whose sender left the graph, or whose only out-neighbour is the
-        previous hop, are silently consumed (never emitted).
+        whose forwarder or origin left the graph (``dropped_off_graph``), or
+        whose only out-neighbour is the previous hop (``dropped_no_target``),
+        are consumed with a traced drop reason and never emitted.
     """
     on_graph = set(graph.agent_ids)
     neighbours = _out_neighbours(graph)
     outboxes: Dict[str, List[Frame]] = {}
     for item in queued:
-        if item.sender not in on_graph:
+        frame = item.frame
+        drop_fields = dict(
+            step=step,
+            round_index=round_index,
+            message_id=int(frame.message_id),  # type: ignore[arg-type]
+            origin=frame.origin,
+            sender=item.sender,
+            receiver=None,
+            previous_hop=item.previous_hop,
+            # No transmission occurs on a drop: the budget the frame held.
+            ttl=ttl - frame.hop_count,
+            scheme=scheme,
+        )
+        if item.sender not in on_graph or frame.origin not in on_graph:
+            # The transport cannot address an off-graph forwarder nor encode
+            # an off-graph origin; the frame is consumed with a traced drop.
+            departed = item.sender if item.sender not in on_graph else frame.origin
             logger.debug(
-                "Relay forward of message {} dropped: forwarder '{}' left the graph",
-                item.frame.message_id,
-                item.sender,
+                "Relay forward of message {} dropped: '{}' left the graph",
+                frame.message_id,
+                departed,
             )
+            trace_sink.append(relay_decision_record(decision="dropped_off_graph", **drop_fields))
             continue
         targets = [
             receiver
@@ -205,7 +226,8 @@ def _emit_queued(
         ]
         if not targets:
             # Previous-hop exclusion left nowhere to send (e.g. an isolated
-            # bidirectional pair): the frame is not emitted at all.
+            # bidirectional pair): the frame is consumed, never emitted.
+            trace_sink.append(relay_decision_record(decision="dropped_no_target", **drop_fields))
             continue
         outboxes.setdefault(item.sender, []).append(item.frame)
         remaining = ttl - (item.frame.hop_count + 1)

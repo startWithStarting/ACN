@@ -291,7 +291,15 @@ class CommunicationRuntime:
         result.diagnostics["graph"] = graph
         result.diagnostics["rounds"] = plan.rounds
         if self._collect_traces:
-            result.diagnostics["trace_records"] = trace_records
+            # Processors may contribute their own records (e.g. the relay
+            # processor's per-decision records) through the
+            # "processor_trace_records" diagnostics key of finalize; they are
+            # appended after the runtime's graph/delivery records.
+            processor_records = result.diagnostics.get("processor_trace_records")
+            if isinstance(processor_records, list):
+                result.diagnostics["trace_records"] = trace_records + processor_records
+            else:
+                result.diagnostics["trace_records"] = trace_records
 
         logger.debug(
             "Communication step {} finished: {} round(s), {} delivered message(s)",

@@ -13,6 +13,8 @@ Record types:
 - ``communication_delivery``: one record per delivered message copy with
   step, round, message id, origin, immediate sender, receiver, hop count,
   and the scheme name.
+- ``communication_relay``: one record per relay protocol decision (Phase 3),
+  built by :func:`relay_decision_record`.
 """
 
 from __future__ import annotations
@@ -24,8 +26,11 @@ from src.communication.types import CommunicationGraph, EdgeMessageBatch
 __all__ = [
     "GRAPH_RECORD_TYPE",
     "DELIVERY_RECORD_TYPE",
+    "RELAY_RECORD_TYPE",
+    "RELAY_DECISIONS",
     "communication_graph_record",
     "communication_delivery_records",
+    "relay_decision_record",
 ]
 
 #: ``record_type`` value of graph snapshot records.
@@ -33,6 +38,12 @@ GRAPH_RECORD_TYPE = "communication_graph"
 
 #: ``record_type`` value of per-delivery records.
 DELIVERY_RECORD_TYPE = "communication_delivery"
+
+#: ``record_type`` value of relay protocol decision records.
+RELAY_RECORD_TYPE = "communication_relay"
+
+#: Valid ``decision`` values of a relay decision record.
+RELAY_DECISIONS = ("delivered", "dropped_duplicate", "dropped_ttl", "forwarded")
 
 
 def communication_graph_record(
@@ -124,3 +135,81 @@ def communication_delivery_records(
             record["episode"] = int(episode)
         records.append(record)
     return records
+
+
+def relay_decision_record(
+    *,
+    decision: str,
+    step: int,
+    round_index: int,
+    message_id: int,
+    origin: str,
+    sender: str,
+    receiver: str,
+    previous_hop: str,
+    ttl: int,
+    scheme: Optional[str] = None,
+    episode: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build one relay protocol decision record (Phase 3, ``multihop_relay``).
+
+    Decisions and their field semantics:
+
+    - ``delivered``: a first-seen copy was accepted into the receiver's
+      application inbox view. ``sender`` is the immediate sender of the copy,
+      which is also its ``previous_hop``.
+    - ``dropped_duplicate``: a copy whose ``message_id`` was already seen by
+      the receiver was suppressed *before* application delivery and
+      forwarding. Fields as for ``delivered``.
+    - ``dropped_ttl``: a first-seen copy was delivered but not enqueued for
+      forwarding because its hop budget is exhausted (``ttl`` is ``0``).
+      Fields as for ``delivered``.
+    - ``forwarded``: the receiver of an earlier copy hands it, unchanged, to
+      the transport. ``sender`` is the forwarding agent, ``receiver`` the
+      intended forward target, and ``previous_hop`` the agent the forwarder
+      received the message from (excluded from the target set). ``round`` is
+      the round in which the forwarded copy is transmitted.
+
+    ``ttl`` is always the remaining hop budget carried by the copy *after*
+    the recorded transmission/arrival, so the ``forwarded`` record of a copy
+    and the delivery-side record of its arrival report the same value.
+
+    Args:
+        decision: One of :data:`RELAY_DECISIONS`.
+        step: Movement step of the decision.
+        round_index: Communication round of the decision (see above).
+        message_id: Stable transport identity of the message.
+        origin: Agent id of the message's original source.
+        sender: Immediate sender (delivery-side) or forwarder (``forwarded``).
+        receiver: Receiving agent (delivery-side) or forward target.
+        previous_hop: The copy's previous hop at the deciding agent.
+        ttl: Remaining hop budget after this transmission/arrival.
+        scheme: The communication scheme name.
+        episode: Optional episode index to include in the record.
+
+    Returns:
+        A JSON-serializable dict with ``record_type`` ``communication_relay``.
+
+    Raises:
+        ValueError: If ``decision`` is not a known relay decision.
+    """
+    if decision not in RELAY_DECISIONS:
+        raise ValueError(
+            "Unknown relay decision {!r}; expected one of {}.".format(decision, RELAY_DECISIONS)
+        )
+    record: Dict[str, Any] = {
+        "record_type": RELAY_RECORD_TYPE,
+        "decision": decision,
+        "step": int(step),
+        "round": int(round_index),
+        "message_id": int(message_id),
+        "origin": origin,
+        "sender": sender,
+        "receiver": receiver,
+        "previous_hop": previous_hop,
+        "ttl": int(ttl),
+        "scheme": scheme,
+    }
+    if episode is not None:
+        record["episode"] = int(episode)
+    return record

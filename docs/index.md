@@ -45,6 +45,8 @@ uv run python run.py --mode parallel --config config/experiment_config.yaml --pe
 * [Environment](environment.md)
 * [Physics](physics.md)
 * [Configuration](configuration.md)
+* [Communication And MARL Decision Log](communication_decision_log.md)
+* [Communication Implementation Plan](communication_implementation_plan.md)
 * [Strategies](strategies.md)
 * [API Reference](api.md)
 * [Development](development.md)

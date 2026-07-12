@@ -1,0 +1,59 @@
+# Avoidant Strategy Configuration with explicit physics attractor field enabled
+
+experiment_name: "avoidant_physics_attractor"
+results_base_dir: "results"
+
+agents:
+  blue_agents:
+    - count: 30
+      communication_bandwidth: 15
+      processing_capability: 30
+      detection_radius: 50.0
+      strategy_type: "pursuit"
+      prediction_interval: 1
+      prediction_timeout: 4
+      observation_window_size: 5
+
+  red_agents:
+    - count: 30
+      communication_bandwidth: 5
+      processing_capability: 3
+      detection_radius: 20.0
+      strategy_type: "avoidant"
+
+environment:
+  width: 300
+  height: 300
+  render_mode: "human_pygame"
+  save_episode_gifs: true
+  max_cycles: 100
+  debug_mode: false
+  physics:
+    enabled: true
+    control_mode: "velocity"
+    dt: 1.0
+    boundary_mode: "clamp"
+    enable_collisions: true
+    enable_obstacles: false
+    default_mass: 1.0
+    default_drag: 0.0
+    default_max_speed: 10.0
+    default_max_force: 10.0
+    default_radius: 0.5
+    default_restitution: 0.8
+    force_fields:
+      - type: "attractor"
+        center: [150.0, 150.0]
+        strength: 0.5
+        falloff: 0.0
+
+analysis:
+  trace:
+    enabled: true
+  plots:
+    generate_after_run: false
+
+training:
+  algorithm: "PPO"
+  num_episodes: 1
+  learning_rate: 0.0003

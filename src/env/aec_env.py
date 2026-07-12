@@ -194,16 +194,7 @@ class AECGameEnv(AECEnv, ACNEnvironmentLogic):
             reward, scored = self._calculate_reward(agent_name, current_agent_obj)
             if scored:
                 self._red_agent_scored_this_step = True
-        else:
-             # Basic action fallback (e.g. discrete 1/-1)
-            if not isinstance(action, dict): # Only applies if not a dict
-                if action == 1:
-                    reward = 1
-                elif action == 0:
-                    reward = -1
-            else:
-                reward = -1 # Penalty for invalid dict action? Or just ignore
-        
+
         self.rewards[agent_name] = reward
         self._cumulative_rewards[agent_name] += reward
 

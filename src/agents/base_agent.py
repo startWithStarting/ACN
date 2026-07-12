@@ -1,6 +1,10 @@
 from enum import Enum
 from typing import Tuple, Optional # For type hinting
 
+import gymnasium.spaces as spaces
+
+from src.agents.action_spaces import DEFAULT_MAX_SPEED, build_continuous_movement_space
+
 class AgentType(Enum):
     """Enumeration for different agent types."""
     BLUE = "blue"
@@ -13,7 +17,7 @@ class BaseAgent:
     """
     Base class for all agents in the simulation.
     """
-    def __init__(self, name: str, agent_type: AgentType, communication_bandwidth: int, processing_capability: int, comms_type: CommsType = CommsType.DIST, x: float = None, y: float = None, speed: float = 0.0, direction: Optional[Tuple[float, float]] = None):
+    def __init__(self, name: str, agent_type: AgentType, communication_bandwidth: int, processing_capability: int, comms_type: CommsType = CommsType.DIST, x: float = None, y: float = None, speed: float = 0.0, direction: Optional[Tuple[float, float]] = None, max_speed: float = DEFAULT_MAX_SPEED, action_space: Optional[spaces.Space] = None):
         """
         Initializes a base agent.
 
@@ -28,6 +32,12 @@ class BaseAgent:
             y (float, optional): The y-coordinate of the agent. Defaults to None.
             speed (float, optional): The movement speed of the agent. Defaults to 0.0.
             direction (Optional[Tuple[float, float]], optional): The movement direction (normalized vector) of the agent. Defaults to None.
+            max_speed (float, optional): Resolved per-team speed cap written onto the
+                agent by the factory. Defaults to 10.0 (the historic hardcoded cap).
+            action_space (Optional[spaces.Space], optional): Movement action space built
+                by src.agents.action_spaces (the factory passes it). When None, the
+                default continuous Dict space is built from max_speed, reproducing the
+                previously hardcoded space exactly.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("Agent name must be a non-empty string.")
@@ -41,6 +51,8 @@ class BaseAgent:
             raise ValueError("Processing capability must be a non-negative integer.")
         if not isinstance(speed, (int, float)) or speed < 0:
             raise ValueError("Speed must be a non-negative number.")
+        if isinstance(max_speed, bool) or not isinstance(max_speed, (int, float)) or max_speed <= 0:
+            raise ValueError("Max speed must be a positive number.")
         if direction is not None:
             if not isinstance(direction, (list, tuple)) or len(direction) != 2:
                  raise ValueError("Direction must be a tuple or list of two numbers.")
@@ -59,6 +71,14 @@ class BaseAgent:
         self.y = y
         self.speed = speed
         self.direction = tuple(direction) if direction else None # Store as tuple if provided
+        # Resolved per-team speed cap and builder-provided movement action space.
+        # With the defaults this is exactly the Dict space agents used to hardcode.
+        self.max_speed = float(max_speed)
+        self.action_space = (
+            action_space
+            if action_space is not None
+            else build_continuous_movement_space(self.max_speed)
+        )
         # Add other common agent state variables here if needed
         # e.g., self.health, self.current_observation, etc.
         self.is_active = True # Flag to indicate if the agent is currently active in the env

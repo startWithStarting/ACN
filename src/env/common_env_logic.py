@@ -7,6 +7,11 @@ import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 from gymnasium.spaces import Box, Dict as GymDict
 
+from src.agents.action_spaces import (
+    DEFAULT_MAX_SPEED,
+    ActionSpaceConfig,
+    build_discrete_movement_spec,
+)
 from src.physics.engine import PhysicsEngine
 from src.physics.fields import create_force_field
 from src.physics.obstacles import create_obstacle
@@ -77,6 +82,16 @@ class ACNEnvironmentLogic:
         self.red_team_scores = []
         self.blue_team_scores = []
         self.step_counts = []
+
+        # --- Action-Space Configuration ---
+        # Default (absent block) is the legacy continuous Dict spec.
+        self.action_space_config = ActionSpaceConfig.from_dict(
+            self.env_config.get("action_space")
+        )
+        self.discrete_actions = self.action_space_config.is_discrete
+        # Per-agent discrete decode specs, built lazily from each agent's
+        # resolved max_speed (per-team caps may differ).
+        self._discrete_movement_specs = {}
 
         # --- Physics Configuration ---
         raw_physics_config = self.env_config.get("physics", {})
@@ -406,8 +421,52 @@ class ACNEnvironmentLogic:
             return np.zeros(2, dtype=np.float32)
         return direction_arr[:2] * speed_value
 
-    def _parse_movement_action(self, action):
-        """Parse the common direction/speed action format into a movement vector."""
+    def _movement_spec_for(self, agent_obj):
+        """Return (building if needed) the discrete decode spec for one agent."""
+        spec = self._discrete_movement_specs.get(agent_obj.name)
+        if spec is None:
+            max_speed = float(getattr(agent_obj, "max_speed", DEFAULT_MAX_SPEED))
+            spec = build_discrete_movement_spec(self.action_space_config, max_speed)
+            self._discrete_movement_specs[agent_obj.name] = spec
+        return spec
+
+    def _parse_movement_action(self, action, agent_obj=None):
+        """Parse an action into (direction, speed, movement) or None if invalid.
+
+        Dict actions ({'direction', 'speed'}, the scripted-controller format) are
+        always accepted. Integer actions are decoded through the discrete movement
+        spec when ``environment.action_space.type`` is ``discrete``; in continuous
+        mode they are rejected with an actionable error.
+
+        Args:
+            action: The raw action (dict, or integer index in discrete mode).
+            agent_obj: The acting agent; required to decode integer actions
+                because the discrete spec depends on the agent's max_speed.
+
+        Returns:
+            Tuple of (direction ndarray, speed float, movement float32 ndarray),
+            or None when the action is not a usable movement command.
+
+        Raises:
+            ValueError: If an integer action arrives while the environment is
+                configured for continuous actions, or a discrete index is out
+                of range.
+        """
+        if not isinstance(action, (bool, np.bool_)) and isinstance(action, (int, np.integer)):
+            if not self.discrete_actions:
+                raise ValueError(
+                    "Received integer action {!r}, but environment.action_space.type is "
+                    "'continuous'. Continuous mode expects dict actions with 'direction' "
+                    "and 'speed'; set environment.action_space.type: 'discrete' to use "
+                    "integer movement actions.".format(action)
+                )
+            if agent_obj is None:
+                return None
+            spec = self._movement_spec_for(agent_obj)
+            direction, speed = spec.decode(int(action))
+            movement = (direction * speed).astype(np.float32)
+            return direction, speed, movement
+
         if not isinstance(action, dict) or "direction" not in action or "speed" not in action:
             return None
 
@@ -478,7 +537,7 @@ class ACNEnvironmentLogic:
         agent_type = getattr(agent_obj.agent_type, 'value', None)
         
         if agent_type in ['red', 'blue']:
-            parsed_action = self._parse_movement_action(action)
+            parsed_action = self._parse_movement_action(action, agent_obj)
             if parsed_action is None:
                 return False
 

@@ -90,6 +90,11 @@ Shared agent keys:
   autoregressive prediction lags
 * `detection_radius`: Radius used by local observation and strategy logic
 * `strategy_type`: Runtime strategy selector
+* `max_speed`: Per-team movement speed cap, default `10.0` (the historic cap).
+  The factory resolves it per group and writes the resolved value onto every
+  agent. It sets the upper bound of the continuous `speed` Box and the top
+  discrete speed level (see `environment.action_space`). For red flocking
+  groups the same key is also forwarded into the observation as before.
 
 Blue `strategy_type` values:
 
@@ -131,6 +136,8 @@ Supported keys used by the current environments:
 * `save_episode_gifs`: Save rendered episode GIFs when a results directory exists
 * `gif_figsize`: Matplotlib figure size for GIF rendering
 * `debug_mode`: Enables extra position-record export in `main_parallel.py`
+* `action_space`: Movement action-space selection (see Action Space
+  Configuration below)
 
 ## Analysis Configuration
 
@@ -173,6 +180,51 @@ For DB-backed persisted runs, use the trace API instead:
 uv run python run.py --mode parallel --config config/experiment_config.yaml --persist
 curl http://localhost:8000/runs
 ```
+
+### Action Space Configuration
+
+The `environment.action_space` section selects the movement action space built
+for every agent (`src/agents/action_spaces.py`). Omitting the block keeps the
+legacy continuous spaces, so existing scenarios are unchanged.
+
+```yaml
+environment:
+  action_space:
+    type: "discrete"   # "continuous" (default) | "discrete"
+    headings: 8        # H evenly spaced unit headings (discrete mode)
+    speed_levels: 4    # S speed levels evenly spaced 0..max_speed (discrete mode)
+```
+
+Supported keys:
+
+* `type`: Defaults to `continuous`, the legacy
+  `Dict{direction: Box[-1, 1]^2, speed: Box[0, max_speed]}` per-agent space.
+  `discrete` builds one flat `Discrete(N)` with `N = 1 + headings *
+  (speed_levels - 1)`.
+* `headings`: Number of evenly spaced unit headings
+  `(cos(2*pi*k/H), sin(2*pi*k/H))`, starting at `(1, 0)`. Default `8`.
+* `speed_levels`: Number of speed levels evenly spaced from `0` to the agent's
+  resolved `max_speed`, including the zero level. Default `4`, i.e.
+  `{0, 1/3, 2/3, 1} * max_speed`. Must be at least 2.
+
+Discrete index layout: index `0` is the shared `stay` action; index
+`1 + k*(S-1) + (j-1)` is heading `k` at nonzero speed level `j`, decoding to
+the target velocity `j * max_speed/(S-1) * (cos(theta_k), sin(theta_k))`.
+Headings are unit vectors, so the speed cap is isotropic.
+
+Action handling in both environments:
+
+* Dict actions (`{'direction', 'speed'}`, the scripted-controller format) are
+  always accepted, in both modes.
+* Integer actions are decoded through the discrete spec when `type: discrete`
+  is configured. In continuous mode integer actions are rejected with an error.
+* `max_speed` resolves per agent group (see Agent Configuration), so teams may
+  have different speed caps over the same `Discrete(N)` index layout.
+
+The discrete speed level equals the achieved speed only in `velocity` physics
+control mode (the default). In `force` control mode the decoded command acts
+as a force and the effective top speed emerges from the force/drag balance;
+the discrete cap is not enforced there.
 
 ### Physics Configuration
 

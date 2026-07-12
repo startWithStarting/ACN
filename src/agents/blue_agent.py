@@ -3,6 +3,7 @@ import numpy as np
 from collections import defaultdict
 import gymnasium.spaces as spaces
 
+from .action_spaces import DEFAULT_MAX_SPEED
 from .base_agent import BaseAgent, AgentType
 from .registry import register_agent
 from ..utils.regressor import VectorAutoRegressor
@@ -20,10 +21,11 @@ class BlueAgent(BaseAgent):
     """
     Represents a Blue agent in the simulation.
     """
-    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, 
+    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int,
                  detection_radius: float = 20.0, strategy_type: str = "pursuit", prediction_timeout: int = 5,
                  observation_window_size: int = 5, prediction_interval: int = 1, grid_size: Tuple[float, float] = (100.0, 100.0),
-                 debug_mode: bool = False):
+                 debug_mode: bool = False, max_speed: float = DEFAULT_MAX_SPEED,
+                 action_space: Optional[spaces.Space] = None):
         """
         Initializes a Blue agent.
 
@@ -40,12 +42,19 @@ class BlueAgent(BaseAgent):
             prediction_interval (int): How often to predict
             grid_size (Tuple[float, float]): Dimensions of the grid (width, height)
             debug_mode (bool): Whether to print debug logs
+            max_speed (float): Resolved per-team speed cap (default 10.0, the historic
+                               hardcoded cap).
+            action_space (Optional[spaces.Space]): Movement action space from the
+                               builder (the factory passes it). Defaults to the legacy
+                               continuous Dict space built from max_speed.
         """
         super().__init__(
             name=name,
             agent_type=AgentType.BLUE,
             communication_bandwidth=communication_bandwidth,
-            processing_capability=processing_capability
+            processing_capability=processing_capability,
+            max_speed=max_speed,
+            action_space=action_space,
         )
         self.grid_size = grid_size
         self.debug_mode = debug_mode
@@ -57,14 +66,6 @@ class BlueAgent(BaseAgent):
         # Dictionary to store prediction models for each red agent
         # Key: Red agent name, Value: LinearRegression model
         self.prediction_models = {}
-        
-        # Define the action space for Blue Agent (matching RedAgent for consistency)
-        self.action_space = spaces.Dict({
-            'direction': spaces.Box(low=np.array([-1.0, -1.0], dtype=np.float32),
-                                    high=np.array([1.0, 1.0], dtype=np.float32),
-                                    shape=(2,), dtype=np.float32),
-            'speed': spaces.Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32)
-        })
 
         # Dictionary to store predicted positions for each red agent
         # Key: Red agent name, Value: List of predicted future positions [(x1, y1), (x2, y2), ...]

@@ -1,10 +1,12 @@
 import numpy as np
-from typing import Tuple
+from typing import Optional, Tuple
 from collections import defaultdict
 
+import gymnasium.spaces as spaces
+
+from .action_spaces import DEFAULT_MAX_SPEED
 from .base_agent import BaseAgent, AgentType
 from .registry import register_agent
-import gymnasium.spaces as spaces
 
 from ..utils.geometry import is_within_detection_radius
 
@@ -20,8 +22,10 @@ class RedAgent(BaseAgent):
     """
     Represents a Red agent in the simulation.
     """
-    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int, 
-                 detection_radius: float = 15.0, strategy_type: str = "center"):
+    def __init__(self, name: str, communication_bandwidth: int, processing_capability: int,
+                 detection_radius: float = 15.0, strategy_type: str = "center",
+                 max_speed: float = DEFAULT_MAX_SPEED,
+                 action_space: Optional[spaces.Space] = None):
         """
         Initializes a Red agent.
 
@@ -37,25 +41,24 @@ class RedAgent(BaseAgent):
                                   "team" - Move toward red teammates
                                   "flocking" - Flocking behavior with neighbors
                                   "trainable" - Controlled by external policy (RL)
+            max_speed (float): Resolved per-team speed cap (default 10.0, the
+                               historic hardcoded cap).
+            action_space (Optional[spaces.Space]): Movement action space from the
+                               builder (the factory passes it). Defaults to the
+                               legacy continuous Dict space built from max_speed.
         """
         super().__init__(
             name=name,
             agent_type=AgentType.RED,
             communication_bandwidth=communication_bandwidth,
-            processing_capability=processing_capability
+            processing_capability=processing_capability,
+            max_speed=max_speed,
+            action_space=action_space,
             # x, y, speed, direction will use defaults from BaseAgent's __init__
             # (x=None, y=None, speed=0.0, direction=None).
             # The environment (AECGameEnv) will set initial x and y.
             # CommsType will also default from BaseAgent (CommsType.DIST).
         )
-
-        # Define the specific action space for Red Agents, overriding the default
-        self.action_space = spaces.Dict({
-            'direction': spaces.Box(low=np.array([-1.0, -1.0], dtype=np.float32),
-                                    high=np.array([1.0, 1.0], dtype=np.float32),
-                                    shape=(2,), dtype=np.float32), # Normalized direction vector
-            'speed': spaces.Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32) # Continuous speed
-        })
 
         # Add detection radius for finding other agents
         self.detection_radius = detection_radius

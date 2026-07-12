@@ -26,6 +26,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "psycopg[binary]>=3.2.0",
+    "torchrl>=0.10.1",
+    "tensordict>=0.10.0",
 ]
 
 [build-system]

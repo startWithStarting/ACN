@@ -1,0 +1,94 @@
+# First trainable benchmark: learned RED team (MAPPO: shared actor, global
+# privileged critic) against scripted VAR-pursuit blues.
+#
+# Composition per docs/communication_decision_log.md:
+# - discrete movement action space for the learned reds;
+# - benchmark red reward (undetected ring dwell, tracked penalty,
+#   potential-based progress-to-ring shaping);
+# - scripted VAR-pursuit blues as the seed opponent, KEEPING privileged
+#   position access (bearing_only + scripted_blue_privileged: true): a
+#   scripted opponent is not the object of study in the red-learning
+#   direction, so granting it the legacy positions preserves current behavior;
+# - communication disabled for red v1.
+#
+# The 120x120 grid keeps the legacy scoring ring (radius 50, +-1 band around
+# the grid center) fully inside the arena. Sizes are deliberately tiny (4v2,
+# short episodes) so this file doubles as a test fixture.
+experiment_name: "benchmark_red_mappo"
+results_base_dir: "results/benchmark_red_mappo"
+
+agents:
+  blue_agents:
+    - count: 4
+      communication_bandwidth: 5
+      processing_capability: 5
+      detection_radius: 30.0
+      strategy_type: "pursuit"      # the VAR-prediction pursuit blue
+      prediction_timeout: 50
+      observation_window_size: 5
+      prediction_interval: 1
+      max_speed: 8.0
+  red_agents:
+    - count: 2
+      communication_bandwidth: 0
+      processing_capability: 0
+      detection_radius: 25.0
+      strategy_type: "avoidant"     # unused while red is the trainable team
+      max_speed: 10.0
+
+environment:
+  width: 120
+  height: 120
+  max_cycles: 64
+  render_mode: null
+  save_episode_gifs: false
+  action_space:
+    type: "discrete"
+    headings: 8
+    speed_levels: 4
+  observation:
+    blue_sensor: "bearing_only"
+    scripted_blue_privileged: true   # scripted VAR blues keep privileged access
+  reward:
+    blue: "legacy"
+    red: "benchmark"
+    weights:
+      red_score: 1.0
+      red_track: 0.1
+      red_progress: 0.05
+  physics:
+    enabled: true
+    control_mode: "velocity"
+    enable_collisions: false
+
+training:
+  backend: "marl"
+  trainable_team: "red"
+  actor: "shared"
+  critic: "global"
+  rollout_length: 64
+  updates: 50
+  epochs: 4
+  minibatches: 4
+  lr: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  seed: 7
+  device: "cpu"
+  checkpoint_every: 10
+  hidden_size: 64
+  encoder:
+    contact_slots: 8
+
+analysis:
+  trace:
+    enabled: false
+  plots:
+    generate_after_run: false
+
+logging:
+  level: "INFO"

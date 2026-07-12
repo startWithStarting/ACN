@@ -15,8 +15,9 @@ Usage (from the repo root):
     # CPU smoke test: runs the 8v8 avoidant-attractor preview end to end
     uvx modal run infra/modal_train.py::smoke
 
-    # Training run (current run.py train path; TorchRL trainer slots in later)
-    uvx modal run infra/modal_train.py::train --config config/aggressive_config.yaml
+    # Training run (run.py --mode train; training.backend "marl" selects the
+    # TorchRL team-selection trainer, other configs use the legacy SB3 path)
+    uvx modal run infra/modal_train.py::train --config config/benchmark_blue_mappo.yaml
 
     # Inspect / pull artifacts from the volume
     uvx modal volume ls acn-results
@@ -112,9 +113,11 @@ def smoke(config: str = "config/avoidant_physics_attractor_preview_config.yaml")
     gpu=TRAIN_GPU,
     timeout=12 * 60 * 60,
 )
-def train(config: str = "config/aggressive_config.yaml", persist: bool = False) -> None:
-    """Remote training run. Uses the current run.py train path; the TorchRL
+def train(config: str = "config/benchmark_blue_mappo.yaml", persist: bool = False) -> None:
+    """Remote training run through run.py --mode train.
 
-    benchmark trainer will use this same entrypoint once implemented."""
+    Configs with training.backend "marl" use the TorchRL team-selection
+    trainer; other configs keep the legacy SB3 path. Artifacts (checkpoints,
+    training_metrics.csv) land under results/ on the persistent volume."""
     extra = ["--persist"] if persist else []
     _run_acn("train", config, extra)

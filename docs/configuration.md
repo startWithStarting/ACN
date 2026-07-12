@@ -581,6 +581,92 @@ supported by the parallel environment; the AEC environment raises
 `NotImplementedError` when a benchmark mode is configured. Missing required
 weights or unknown keys fail fast at environment construction.
 
+## Training Configuration
+
+The top-level `training:` block configures `run.py --mode train`. Routing is
+by backend:
+
+* `backend: "marl"` selects the TorchRL-backed team-selection trainer
+  (`src.training.marl`), described below.
+* Any other value (or an absent block) keeps the **legacy Stable-Baselines3
+  path** (`src.training.trainer`), which trains red agents with parameter
+  sharing. The legacy path is deprecated for new work: it remains functional
+  as a compatibility adapter but new MARL experiments should use the `marl`
+  backend.
+
+The MARL trainer binds one PPO algorithm to exactly ONE trainable team per
+run; the opposing team runs its scripted `choose_action` unchanged (the
+VAR-pursuit blue works via `environment.observation.scripted_blue_privileged`).
+Marking both or neither team as trainable is rejected.
+
+```yaml
+training:
+  backend: "marl"              # route into the MARL trainer
+  trainable_team: "blue"       # REQUIRED: "blue" | "red" (exactly one)
+  actor: "shared"              # "shared" (default) | "separate"
+  critic: "global"             # "global" (default, MAPPO) | "local" (IPPO)
+  rollout_length: 128          # env steps collected per update
+  updates: 100                 # number of PPO updates
+  epochs: 4                    # optimization epochs per update
+  minibatches: 4               # minibatches per epoch
+  lr: 3.0e-4                   # Adam learning rate
+  gamma: 0.99                  # discount factor
+  gae_lambda: 0.95             # GAE lambda
+  clip_epsilon: 0.2            # PPO clip range
+  entropy_coef: 0.01           # entropy bonus coefficient
+  value_coef: 0.5              # critic loss coefficient
+  max_grad_norm: 0.5           # global gradient-norm clip
+  seed: 0                      # master seed (python/numpy/torch)
+  device: "cpu"                # torch device
+  checkpoint_every: 10         # checkpoint every N updates
+  hidden_size: 64              # actor/critic MLP hidden width
+  encoder:
+    contact_slots: 8           # K padded contact-report slots
+```
+
+Semantics and constraints:
+
+* **Actor modes**: `shared` uses one actor network and optimizer for the whole
+  team (parameter sharing; shared weights never share observations or state);
+  `separate` gives each agent its own actor copy and optimizer.
+* **Critic scopes**: `local` critics consume only the agent's own
+  policy-visible encoding (IPPO-style); `global` uses ONE central critic over
+  the training-only privileged simulator state (all agent positions/velocities
+  plus team ids) — MAPPO/CTDE-style. The privileged tensor travels under the
+  dedicated `privileged_state` key and never reaches an actor. The benchmark
+  default is `shared` + `global` (MAPPO with parameter sharing).
+* **Environment prerequisites** (validated with actionable errors): the
+  discrete movement action space (`environment.action_space.type: discrete`)
+  is required. When `trainable_team: blue`, the bearing-only sensor is
+  required and `environment.observation.scripted_blue_privileged` must be
+  `false` so no privileged key exists in blue observations (the privileged
+  mode is for scripted blues only). The policy encoders additionally refuse
+  any observation carrying `privileged_red_agents` or `ground_truth_contacts`.
+* **Encoders**: policy inputs are own position + grid center (normalized),
+  `contact_slots` padded bearing-report slots with a validity mask (report
+  order; overflow dropped deterministically), and the communication view at
+  the configured payload dimension (`one_hop_mean` uses the aggregated vector;
+  `one_hop_direct`/`multihop_relay` inboxes are mean-pooled at the policy
+  boundary; scheme `none`/absent contributes zeros so ablations share one
+  feature layout).
+* **Determinism and resume**: runs are fully seeded and headless (rendering
+  and GIFs are forcibly disabled). Every episode starts from a fresh
+  environment seeded from the master seed and a checkpointed reset counter.
+  Checkpoints (`<results>/checkpoints/checkpoint_*.pt`) store network,
+  optimizer, and RNG state plus a config snapshot; `run.py --mode train
+  --resume <checkpoint>` continues the run exactly (identical loss
+  trajectory). Per-update metrics are appended to
+  `<results>/training_metrics.csv`.
+* **Remote execution**: the same entrypoint runs on Modal via
+  `uvx modal run infra/modal_train.py::train --config <yaml>`; artifacts land
+  under `results/` on the persistent volume.
+
+Reference scenarios: `config/benchmark_blue_mappo.yaml` (learned blue,
+bearing-only sensor, `one_hop_mean` communication, benchmark blue reward,
+scripted avoidant reds) and `config/benchmark_red_mappo.yaml` (learned red,
+benchmark red reward, scripted VAR-pursuit blues with privileged access,
+communication disabled).
+
 ## Current Runtime Caveats
 
 Several modules are present as extension points but are not yet wired into the
@@ -599,9 +685,11 @@ default simulation loop:
   backward compatibility.
 * `src.env.observation` contains observation builder classes, but the runtime
   currently builds observations through `ACNEnvironmentLogic._get_observation`.
-* PPO hyperparameters in the bundled configs are stored under `training`. The
-  current `Trainer` reads most PPO hyperparameters from the top level, so nested
-  training values are descriptive until the schema is unified.
+* Legacy scenario configs (e.g. `config/aggressive_config.yaml`) store PPO
+  hyperparameters under `training` without a `backend`; those values are read
+  by the legacy SB3 `Trainer` from the top level, so they remain descriptive
+  there. Only the validated `backend: "marl"` schema described in "Training
+  Configuration" above is enforced.
 
 ## Environment Variables
 

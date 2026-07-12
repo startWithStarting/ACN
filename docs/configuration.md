@@ -302,9 +302,9 @@ parsed and validated by `src.communication.config.parse_communication_config`
 and compiled into a runnable plan by
 `src.communication.registry.create_communication_plan`. An absent block,
 `enabled: false`, or `scheme: "none"` all mean "no communication" and leave
-existing scenarios unchanged. The communication runtime is not yet wired into
-the environments; the compiled plan is consumed by
-`src.communication.runtime.CommunicationRuntime`.
+existing scenarios unchanged. When enabled, the parallel environment compiles
+the plan at construction and executes it through
+`src.communication.runtime.CommunicationRuntime` inside every `step(actions)`.
 
 ```yaml
 environment:
@@ -366,10 +366,90 @@ Supported keys:
 * `transport.type` / `transport.delivery`: The initial transport is
   `slotted_radius` with `broadcast` delivery and no loss, queues, or cost.
 
-Per-agent communication radius is resolved outside the topology
-(agent/spec value over team default over environment fallback) and read from
-each agent's `communication_radius` attribute, or supplied to
-`RadiusTopology` as an explicit per-agent mapping.
+#### Step Flow (Parallel Environment)
+
+`ParallelGameEnv.step(actions)` runs the communication phase BEFORE movement,
+on the frozen pre-move state, per the runtime model in
+`docs/communication_implementation_plan.md`:
+
+1. The current local observations (the ones the caller just acted on) are
+   rebuilt at the pre-move positions.
+2. The payload source derives each agent's outbox from its own observation
+   only (`src.communication.sources.EngineeredBearingSource` for
+   `engineered_vector`: one anonymous 4-float bearing report per locally
+   visible opponent).
+3. `CommunicationRuntime.run_step` builds the frozen same-team radius graph
+   and runs the `R` synchronous rounds; deliveries enter the per-agent
+   message caches.
+4. Movement actions are applied and physics advances once, as before.
+5. The step's post-move observations are returned with each agent's
+   communication view attached, so delivered messages become available to
+   the NEXT decision.
+
+The AEC environment does not support communication: constructing `AECGameEnv`
+with an enabled scheme raises `NotImplementedError` (AEC agent iteration order
+must not emulate synchronous communication rounds).
+
+#### Observation And Infos Contract
+
+When communication is enabled, every observation dict (from `reset` and
+`step`) carries a `communication` key; the disabled path never adds the key,
+so legacy observation dicts stay structurally identical. The view is:
+
+```python
+observation["communication"] == {
+    "scheme": "one_hop_direct",   # configured scheme name
+    "inbox": EdgeMessageBatch,    # this step's per-agent entry of the
+                                  # CommunicationResult.agent_output (the
+                                  # preserved inbox for one_hop_direct);
+                                  # an empty tuple () at reset or when the
+                                  # agent was off the graph
+    "agent_ids": ("blue_0", ...), # node-index -> agent-id decode table for
+                                  # the inbox's sender/origin/receiver indices
+    "cache": MessageCache,        # the agent's persistent message-cache handle
+    "cache_window": 0,            # its configured C window in rounds
+}
+```
+
+Reset observations carry the explicit empty view (same shape, zero messages),
+implementing the "no-communication baseline receives an explicit empty view"
+rule. Step infos surface per-step summary counts:
+
+```python
+infos[agent]["communication"] == {"messages_delivered": 4}
+```
+
+The step's communication trace records (graph snapshot plus one record per
+delivered message copy, built by `src.communication.tracing`) are kept on the
+environment as `last_communication_trace_records`. Episode reset clears every
+message cache through `CommunicationRuntime.reset()`.
+
+#### Per-Agent Communication Radius
+
+`create_agents_from_config` resolves each agent's communication radius with
+this precedence and writes the resolved float onto every agent as
+`communication_radius` (which `RadiusTopology` reads directly):
+
+1. the group spec's `communication_radius`
+   (`agents.blue_agents[i].communication_radius`);
+2. the team default (`agents.team_defaults.<team>.communication_radius`);
+3. the environment fallback (`environment.communication_radius`, default
+   `15.0`).
+
+```yaml
+agents:
+  team_defaults:
+    blue:
+      communication_radius: 12.0
+  blue_agents:
+    - count: 2
+      communication_radius: 20.0   # spec value wins over the team default
+    - count: 1                     # uses the blue team default (12.0)
+  red_agents:
+    - count: 2                     # uses environment.communication_radius
+environment:
+  communication_radius: 15.0
+```
 
 ### Reward Configuration
 
@@ -428,11 +508,13 @@ default simulation loop:
   (`create_reward_function`) that is not wired into the environments; the
   runtime uses the legacy attractor-ring reward and blue passive reward by
   default, plus the config-gated benchmark modes described above.
-* `src.communication` now contains the Phase 1 runtime (radius topology,
-  slotted transport, fixed-round scheduler, and the `one_hop_direct` scheme),
-  but the environments do not invoke it yet: no messages are delivered during
-  simulation until the environment integration phase lands. The legacy
-  `src.communication.models` placeholders remain for backward compatibility.
+* `src.communication`'s Phase 1 runtime (radius topology, slotted transport,
+  fixed-round scheduler, and the `one_hop_direct` scheme) is executed by the
+  parallel environment inside `step(actions)` when
+  `environment.communication` enables a scheme; communication defaults to
+  disabled, and the AEC environment reports enabled communication as
+  unsupported. The legacy `src.communication.models` placeholders remain for
+  backward compatibility.
 * `src.env.observation` contains observation builder classes, but the runtime
   currently builds observations through `ACNEnvironmentLogic._get_observation`.
 * PPO hyperparameters in the bundled configs are stored under `training`. The

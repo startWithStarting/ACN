@@ -199,6 +199,83 @@ You can override body settings globally with `agent_*` keys, by type with nested
 `red` or `blue` dictionaries, or per agent group with a nested `physics`
 dictionary under that group.
 
+### Communication Configuration
+
+The `environment.communication` section selects and parameterizes a named
+communication scheme (see `docs/communication_implementation_plan.md`). It is
+parsed and validated by `src.communication.config.parse_communication_config`
+and compiled into a runnable plan by
+`src.communication.registry.create_communication_plan`. An absent block,
+`enabled: false`, or `scheme: "none"` all mean "no communication" and leave
+existing scenarios unchanged. The communication runtime is not yet wired into
+the environments; the compiled plan is consumed by
+`src.communication.runtime.CommunicationRuntime`.
+
+```yaml
+environment:
+  communication:
+    enabled: true
+    scheme: "one_hop_direct"
+    rounds_per_step: 1
+    cache_window: 0
+
+    topology:
+      type: "radius"
+      radius_rule: "sender"        # mutual | sender | receiver | minimum
+      include_self_edges: false
+      freeze_within_step: true
+
+    payload:
+      type: "engineered_vector"
+      dimension: 4
+      coordinate_frame: "global"
+
+    processor:
+      backend: "pyg"
+      aggregation: "none"
+      update: "identity"
+
+    transport:
+      type: "slotted_radius"
+      delivery: "broadcast"
+      free: true
+```
+
+Supported keys:
+
+* `enabled`: Defaults to `false`. Communication only runs when explicitly
+  enabled with a non-`none` scheme.
+* `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`. Reserved for
+  later delivery phases: `one_hop_mean`, `multihop_relay`, `multihop_gnn`.
+* `rounds_per_step` (R): Synchronous communication rounds per movement step,
+  run over a graph frozen at the start of the step. One round moves a message
+  at most one graph hop. `one_hop_direct` requires exactly `1`.
+* `cache_window` (C): Sliding per-agent message-cache window in rounds. The
+  window spans movement-step boundaries; `0` retains nothing. Relay schemes
+  must satisfy `cache_window >= processor.ttl`.
+* `topology.type`: Graph builder; the initial builder is `radius`
+  (`src.communication.topology.RadiusTopology`).
+* `topology.radius_rule`: Which agent's communication radius validates a
+  directed edge: `sender` (default), `receiver`, `mutual`, or `minimum`.
+* `topology.include_self_edges`: Defaults to `false`.
+* `topology.freeze_within_step`: Defaults to `true`; per-round graph
+  rebuilding is not supported yet.
+* `payload.type` / `payload.dimension`: `engineered_vector` with dimension 4
+  is the anonymous bearing report
+  `[observer_x, observer_y, direction_x, direction_y]` produced by
+  `src.communication.sources.EngineeredBearingSource`.
+* `processor.aggregation`: Must be `none` for `one_hop_direct` (its contract
+  preserves distinct messages); aggregating schemes arrive in Phase 2.
+* `processor.ttl`, `processor.forwarding`, `processor.packet_relay`: Relay
+  settings; rejected for `one_hop_direct` (use `multihop_relay` later).
+* `transport.type` / `transport.delivery`: The initial transport is
+  `slotted_radius` with `broadcast` delivery and no loss, queues, or cost.
+
+Per-agent communication radius is resolved outside the topology
+(agent/spec value over team default over environment fallback) and read from
+each agent's `communication_radius` attribute, or supplied to
+`RadiusTopology` as an explicit per-agent mapping.
+
 ## Current Runtime Caveats
 
 Several modules are present as extension points but are not yet wired into the
@@ -206,8 +283,11 @@ default simulation loop:
 
 * `src.env.rewards` contains a modular reward factory, but the environments use
   a hard-coded attractor-ring reward and blue passive reward.
-* `src.communication.models` contains no-op and GNN placeholders, but there is no
-  runtime communication channel that delivers messages between agents.
+* `src.communication` now contains the Phase 1 runtime (radius topology,
+  slotted transport, fixed-round scheduler, and the `one_hop_direct` scheme),
+  but the environments do not invoke it yet: no messages are delivered during
+  simulation until the environment integration phase lands. The legacy
+  `src.communication.models` placeholders remain for backward compatibility.
 * `src.env.observation` contains observation builder classes, but the runtime
   currently builds observations through `ACNEnvironmentLogic._get_observation`.
 * PPO hyperparameters in the bundled configs are stored under `training`. The

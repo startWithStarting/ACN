@@ -28,7 +28,7 @@ from src.communication.types import CommunicationGraph, CommunicationResult
 # Named schemes defined by the implementation plan whose delivery phases have
 # not landed yet. Compiling them must raise NotImplementedError.
 # (one_hop_direct landed in Phase 1 and is now a registered scheme.)
-UNIMPLEMENTED_SCHEMES = ("one_hop_mean", "multihop_relay", "multihop_gnn")
+UNIMPLEMENTED_SCHEMES = ("one_hop_mean", "multihop_gnn")
 
 
 def _two_agent_graph(step: int = 0) -> CommunicationGraph:

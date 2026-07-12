@@ -51,7 +51,6 @@ _SCHEME_REGISTRY: Dict[str, SchemeBuilder] = {}
 # until that phase lands.
 _PLANNED_SCHEME_PHASES: Dict[str, str] = {
     "one_hop_mean": "Phase 2 (PyG Aggregations And Rule-Based Processing)",
-    "multihop_relay": "Phase 3 (Multi-Hop Unchanged Relay)",
     "multihop_gnn": "Phase 4 (Learned PyG Communication)",
 }
 

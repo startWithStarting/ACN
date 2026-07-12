@@ -56,6 +56,16 @@ class AECGameEnv(AECEnv, ACNEnvironmentLogic):
                 "Run with --mode parallel, or keep both reward modes 'legacy'."
             )
 
+        if self.communication_runtime is not None:
+            raise NotImplementedError(
+                "Communication (environment.communication with scheme '{}') is not supported "
+                "by the AEC environment: the benchmark communication runtime is "
+                "parallel-first, and AEC agent iteration order must not emulate synchronous "
+                "communication rounds (docs/communication_implementation_plan.md, 'AEC "
+                "Environment'). Run with --mode parallel, or disable "
+                "communication.".format(self.communication_config.scheme)
+            )
+
         self.max_cycles = env_config.get("max_cycles", 10)
         
         # Initialize agent positions randomly

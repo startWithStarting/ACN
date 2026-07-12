@@ -119,6 +119,13 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         # in infos, aligned with each blue's contact_reports order.
         self._attach_ground_truth_infos(infos)
 
+        # Episode reset clears all message caches; the reset observations carry
+        # the explicit empty communication view (same shape, zero messages).
+        if self.communication_runtime is not None:
+            self.communication_runtime.reset()
+            self.last_communication_trace_records = []
+            self._attach_communication_views(observations, self._empty_communication_result())
+
         return observations, infos
 
     def step(self, actions):
@@ -137,7 +144,16 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         infos = {agent: {} for agent in self.agents}
         
         red_scored_this_step = False
-        
+
+        # 0. Communication phase (config-gated). The R synchronous rounds run
+        # BEFORE movement, over the same-team radius graph frozen at the
+        # pre-move positions, seeded by the local observations the caller just
+        # acted on. Deliveries are attached to the observations returned below,
+        # so they become available to the NEXT decision.
+        communication_result = None
+        if self.communication_runtime is not None:
+            communication_result = self._run_communication_phase()
+
         # 1. Apply movement controls for all agents, then advance physics once.
         if self.use_physics:
             self._begin_physics_step()
@@ -214,6 +230,11 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         observations = {agent: self._get_observation(agent, self.steps) for agent in self.agents}
         # Bearing-only mode: expose privileged per-report red identities via infos.
         self._attach_ground_truth_infos(infos)
+        # Communication enabled: attach each agent's view of this step's
+        # deliveries (next-decision input) and per-step delivery counts.
+        if communication_result is not None:
+            self._attach_communication_views(observations, communication_result)
+            self._attach_communication_infos(infos, communication_result)
 
         # 6. Render
         if self.render_mode in ["human", "human_matplotlib", "human_matplotlib_pred", "human_pygame"]:

@@ -12,6 +12,11 @@ from src.agents.action_spaces import (
     ActionSpaceConfig,
     build_discrete_movement_spec,
 )
+from src.communication.config import parse_communication_config
+from src.communication.registry import create_communication_plan
+from src.communication.runtime import CommunicationRuntime
+from src.communication.sources import create_message_source
+from src.communication.types import CommunicationResult
 from src.env.sensors import ObservationConfig, build_contact_reports
 from src.physics.engine import PhysicsEngine
 from src.physics.fields import create_force_field
@@ -129,6 +134,27 @@ class ACNEnvironmentLogic:
         self._red_pin_streaks = {}
         self._red_ring_potentials = {}
         self._initial_red_count = 0
+
+        # --- Communication Configuration (config-gated; defaults to disabled) ---
+        # An absent environment.communication block, enabled: false, or scheme
+        # "none" all leave the runtime at None: the disabled path adds no
+        # observation keys and changes no behavior.
+        self.communication_config = parse_communication_config(
+            self.env_config.get("communication")
+        )
+        self.communication_runtime = None
+        self._communication_source = None
+        # Trace records of the most recent communication step (plain dicts from
+        # src.communication.tracing), for recorders and analysis code.
+        self.last_communication_trace_records = []
+        if self.communication_config.is_active:
+            plan = create_communication_plan(self.communication_config)
+            self.communication_runtime = CommunicationRuntime(
+                plan, scheme_name=self.communication_config.scheme
+            )
+            self._communication_source = create_message_source(
+                self.communication_config.payload
+            )
 
     def _distribute_agents(self):
         """Categorize agents into red and blue lists."""
@@ -349,6 +375,110 @@ class ACNEnvironmentLogic:
             agent_infos = infos.get(agent_name)
             if agent_infos is not None:
                 agent_infos['ground_truth_contacts'] = contacts
+
+    # --- Communication Phase ---
+    def _run_communication_phase(self):
+        """Run the R communication rounds on the frozen pre-move state.
+
+        Implements the runtime model of docs/communication_implementation_plan.md
+        ("Environment Integration"): rebuilds the current local observations
+        (the ones the caller just acted on; positions have not moved yet),
+        derives the source outboxes from them (``u_i(t) = g_comm(o_i(t))``),
+        and runs the fixed-round scheduler over the same-team radius graph
+        frozen at the current positions. Movement and physics are applied by
+        the caller afterwards, so delivered messages become available to the
+        NEXT decision. The step's trace records are kept on
+        ``self.last_communication_trace_records``.
+
+        Returns:
+            The step's :class:`~src.communication.types.CommunicationResult`.
+        """
+        step = self.steps
+        active_names = [
+            name for name in self.agents
+            if getattr(self.agent_objects[name], "is_active", True)
+        ]
+        local_observations = {
+            name: self._get_observation(name, step) for name in active_names
+        }
+        outboxes = self._communication_source.build_outboxes(local_observations, step)
+        result = self.communication_runtime.run_step(
+            local_observations=local_observations,
+            outboxes=outboxes,
+            step=step,
+            agents=[self.agent_objects[name] for name in active_names],
+        )
+        self.last_communication_trace_records = list(
+            result.diagnostics.get("trace_records", [])
+        )
+        return result
+
+    def _empty_communication_result(self):
+        """Build the explicit empty communication result (reset baseline).
+
+        Every current agent maps to an explicit empty view with the same shape
+        as a delivering step and zero messages, per the decision log's
+        "no-communication baseline receives an explicit empty view" rule.
+        """
+        return CommunicationResult.empty(
+            agent_ids=tuple(self.agents),
+            payload_dim=self.communication_config.payload.dimension,
+        )
+
+    def _communication_view(self, agent_name, result):
+        """Build one agent's policy-facing communication view.
+
+        Args:
+            agent_name: The receiving agent's name.
+            result: The step's communication result (or the explicit empty
+                result at reset).
+
+        Returns:
+            Dict with ``scheme`` (the configured scheme name), ``inbox`` (the
+            agent's entry of ``result.agent_output`` — for ``one_hop_direct`` a
+            preserved-inbox ``EdgeMessageBatch``; an empty tuple when the agent
+            was off the graph or at reset), ``agent_ids`` (node-index ->
+            agent-id decode table for the inbox index fields), ``cache`` (the
+            agent's persistent ``MessageCache`` handle), and ``cache_window``
+            (its configured C window in rounds).
+        """
+        graph = result.diagnostics.get("graph")
+        agent_ids = tuple(graph.agent_ids) if graph is not None else tuple(result.agent_output)
+        return {
+            "scheme": self.communication_config.scheme,
+            "inbox": result.agent_output.get(agent_name, ()),
+            "agent_ids": agent_ids,
+            "cache": self.communication_runtime.cache_for(agent_name),
+            "cache_window": self.communication_runtime.plan.cache_window,
+        }
+
+    def _attach_communication_views(self, observations, result):
+        """Attach per-agent communication views under the 'communication' key.
+
+        Only called when communication is enabled; the disabled path never
+        adds the key, so legacy observation dicts stay structurally identical.
+        """
+        for agent_name, observation in observations.items():
+            observation["communication"] = self._communication_view(agent_name, result)
+
+    def _attach_communication_infos(self, infos, result):
+        """Surface per-step delivery counts in ``infos[agent]['communication']``.
+
+        Args:
+            infos: Mutable per-agent infos dict for this step; updated in place.
+            result: The step's communication result.
+        """
+        delivered = result.delivered_messages
+        graph = result.diagnostics.get("graph")
+        counts = {}
+        if graph is not None and delivered.num_messages > 0:
+            for receiver in delivered.receiver_index.tolist():
+                receiver_name = graph.agent_ids[receiver]
+                counts[receiver_name] = counts.get(receiver_name, 0) + 1
+        for agent_name, agent_infos in infos.items():
+            agent_infos["communication"] = {
+                "messages_delivered": counts.get(agent_name, 0),
+            }
 
     def _is_red_agent_detected(self, red_agent):
         """Check if a red agent is detected by any active blue agent."""

@@ -29,7 +29,7 @@ from src.utils.logger import get_logger
 
 logger = get_logger("acn.communication")
 
-__all__ = ["MessageSource", "EngineeredBearingSource"]
+__all__ = ["MessageSource", "EngineeredBearingSource", "create_message_source"]
 
 #: Observation keys holding visible-opponent mappings, tried in order.
 _OPPONENT_KEYS: Tuple[str, ...] = ("red_agents", "blue_agents")
@@ -211,3 +211,46 @@ class EngineeredBearingSource:
             step,
         )
         return outboxes
+
+
+def create_message_source(payload_config: Optional[object] = None) -> MessageSource:
+    """Build the message source selected by a communication payload config.
+
+    Maps the ``communication.payload`` section onto the source that derives
+    per-agent outboxes from local observations (``u_i(t) = g_comm(o_i(t))``).
+    ``engineered_vector`` — the Phase 1 baseline — yields the deterministic
+    :class:`EngineeredBearingSource`.
+
+    Args:
+        payload_config: The ``communication.payload`` section — a typed
+            :class:`~src.communication.config.PayloadConfig`, a mapping with
+            the documented field names, or ``None`` for the defaults
+            (``engineered_vector``).
+
+    Returns:
+        The :class:`MessageSource` for the configured payload type.
+
+    Raises:
+        NotImplementedError: For payload types defined by the implementation
+            plan but without a source yet (``learned``).
+        ValueError: For unknown payload types.
+    """
+    if payload_config is None:
+        payload_type: object = "engineered_vector"
+    elif isinstance(payload_config, Mapping):
+        payload_type = payload_config.get("type", "engineered_vector")
+    else:
+        payload_type = getattr(payload_config, "type", "engineered_vector")
+
+    if payload_type == "engineered_vector":
+        return EngineeredBearingSource()
+    if payload_type == "learned":
+        raise NotImplementedError(
+            "Communication payload type 'learned' has no message source yet; learned "
+            "payloads are delivered in Phase 4/5 of "
+            "docs/communication_implementation_plan.md."
+        )
+    raise ValueError(
+        "Unknown communication payload type {!r}. Known types: engineered_vector, "
+        "learned.".format(payload_type)
+    )

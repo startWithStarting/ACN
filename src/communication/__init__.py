@@ -15,8 +15,10 @@ transport (:mod:`src.communication.transport`), the fixed-round scheduler
 (:mod:`src.communication.tracing`), and the registered ``one_hop_direct``
 scheme (:mod:`src.communication.schemes`).
 
-No environment integration yet: environments, agents, and entry points do not
-consume this package.
+Environment integration: the parallel environment
+(:mod:`src.env.parallel_env`) compiles the configured plan at construction and
+runs the communication rounds inside ``step(actions)`` before movement; the
+AEC environment reports enabled communication as unsupported.
 
 The legacy :class:`CommunicationModel` hierarchy from
 :mod:`src.communication.models` remains re-exported for backward
@@ -79,7 +81,7 @@ from .registry import (
 from .topology import RadiusTopology
 from .transport import Frame, SlottedRadiusTransport, concat_edge_message_batches
 from .runtime import CachedDelivery, CommunicationRuntime
-from .sources import EngineeredBearingSource, MessageSource
+from .sources import EngineeredBearingSource, MessageSource, create_message_source
 from .processors import DirectProcessor
 from .tracing import (
     DELIVERY_RECORD_TYPE,
@@ -140,6 +142,7 @@ __all__ = [
     "CommunicationRuntime",
     "EngineeredBearingSource",
     "MessageSource",
+    "create_message_source",
     "DirectProcessor",
     "DELIVERY_RECORD_TYPE",
     "GRAPH_RECORD_TYPE",

@@ -399,14 +399,28 @@ Model"):
 * `processor.ttl` is the total hop budget; a copy with no budget left is
   delivered but never re-emitted. `ttl > rounds_per_step` is allowed: the
   relay continues at round 0 of the next movement step over the new graph.
+  A carried-over forward whose forwarder or origin has left the graph by
+  the next step is consumed with a traced drop.
 * Duplicates are dropped before app delivery and forwarding, keyed by
-  `message_id` per receiver. The duplicate-suppression memory horizon equals
-  `cache_window`, which is why the compiler enforces the relay-correctness
-  floor `cache_window >= ttl`.
+  `message_id` per receiver, and they never enter the per-agent message
+  cache, the step's `delivered_messages` log, or the
+  `infos[agent]["communication"]["messages_delivered"]` counts: every
+  policy-visible delivery surface holds first-seen copies only. The
+  duplicate-suppression memory horizon equals `cache_window`, which is why
+  the compiler enforces the relay-correctness floor `cache_window >= ttl`.
+* Previous-hop exclusion is two-layered because the transport is
+  broadcast-only: a forwarder whose only out-neighbour is the previous hop
+  does not transmit at all (`dropped_no_target`); when other targets exist,
+  the broadcast copy physically reaching the previous hop is a guaranteed
+  duplicate, so it shows up as a `communication_delivery` transport trace
+  record (paired with a `dropped_duplicate` relay record) but never on the
+  delivery surfaces above.
 * Every protocol decision is traced as a `communication_relay` record
-  (`delivered` / `dropped_duplicate` / `dropped_ttl` / `forwarded` with
-  step, round, message id, origin, sender, receiver, previous hop, and
-  remaining ttl), appended to `last_communication_trace_records`.
+  (`delivered` / `dropped_duplicate` / `dropped_ttl` / `forwarded` /
+  `dropped_no_target` / `dropped_off_graph` with step, round, message id,
+  origin, sender, receiver — `null` for the consumed-without-transmission
+  drops — previous hop, and remaining ttl), appended to
+  `last_communication_trace_records`.
 
 #### Step Flow (Parallel Environment)
 

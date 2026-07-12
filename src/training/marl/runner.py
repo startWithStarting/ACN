@@ -159,7 +159,7 @@ class MarlTrainingRunner:
             self.settings.critic,
             num_actions,
             self.encoder.feature_dim,
-            self.settings.device,
+            str(self.settings.resolved_device()),
         )
 
     # ------------------------------------------------------------------

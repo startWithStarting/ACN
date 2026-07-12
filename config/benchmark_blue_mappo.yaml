@@ -82,7 +82,7 @@ training:
   value_coef: 0.5
   max_grad_norm: 0.5
   seed: 7
-  device: "cpu"
+  device: "auto"               # cuda when available (Modal T4), else cpu
   checkpoint_every: 10
   hidden_size: 64
   encoder:

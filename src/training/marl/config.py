@@ -26,7 +26,7 @@ Reference block (all keys shown; defaults in parentheses)::
       value_coef: 0.5              # critic loss coefficient
       max_grad_norm: 0.5           # global gradient-norm clip
       seed: 0                      # master seed (python/numpy/torch)
-      device: "cpu"                # torch device string
+      device: "auto"               # "auto" -> cuda if available, else cpu
       checkpoint_every: 10         # save a checkpoint every N updates
       hidden_size: 64              # actor/critic MLP hidden width
       encoder:
@@ -60,6 +60,7 @@ __all__ = [
     "VALID_ACTOR_MODES",
     "VALID_CRITIC_SCOPES",
     "MARL_BACKEND",
+    "AUTO_DEVICE",
     "EncoderSettings",
     "TrainingSettings",
     "parse_training_config",
@@ -81,6 +82,7 @@ VALID_CRITIC_SCOPES: Tuple[str, ...] = ("local", "global")
 
 #: The backend value that routes ``run.py --mode train`` into this trainer.
 MARL_BACKEND: str = "marl"
+AUTO_DEVICE: str = "auto"
 
 _KNOWN_KEYS: Tuple[str, ...] = (
     "backend",
@@ -197,7 +199,7 @@ class TrainingSettings:
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
     seed: int = 0
-    device: str = "cpu"
+    device: str = "auto"
     checkpoint_every: int = 10
     hidden_size: int = 64
     encoder: EncoderSettings = field(default_factory=EncoderSettings)
@@ -246,15 +248,27 @@ class TrainingSettings:
         _require_int(self.hidden_size, "hidden_size", 1)
         if not isinstance(self.device, str):
             raise TrainingConfigError(
-                "training.device must be a torch device string (e.g. 'cpu', 'cuda'), "
+                "training.device must be a torch device string (e.g. 'auto', 'cpu', 'cuda'), "
                 "got {} ({!r}).".format(type(self.device).__name__, self.device)
             )
-        try:
-            torch.device(self.device)
-        except (RuntimeError, ValueError) as exc:
-            raise TrainingConfigError(
-                "training.device {!r} is not a valid torch device: {}".format(self.device, exc)
-            )
+        if self.device != AUTO_DEVICE:
+            try:
+                torch.device(self.device)
+            except (RuntimeError, ValueError) as exc:
+                raise TrainingConfigError(
+                    "training.device {!r} is not a valid torch device: {}".format(self.device, exc)
+                )
+
+    def resolved_device(self) -> "torch.device":
+        """Resolve the configured device, mapping ``auto`` to CUDA when available.
+
+        ``auto`` (the default) selects ``cuda`` when ``torch.cuda.is_available()``
+        and falls back to ``cpu`` otherwise, so the same config trains on a GPU
+        box (e.g. the Modal T4 path) and still runs on a CPU-only laptop.
+        """
+        if self.device == AUTO_DEVICE:
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(self.device)
         if not isinstance(self.encoder, EncoderSettings):
             raise TrainingConfigError(
                 "training.encoder must parse to EncoderSettings, got {!r}.".format(self.encoder)

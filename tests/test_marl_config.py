@@ -2,6 +2,8 @@
 
 import unittest
 
+import torch
+
 from src.training.marl.config import (
     EncoderSettings,
     TrainingConfigError,
@@ -106,7 +108,7 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertEqual(settings.actor, "shared")
         self.assertEqual(settings.critic, "global")
         self.assertEqual(settings.encoder, EncoderSettings(contact_slots=8))
-        self.assertEqual(settings.device, "cpu")
+        self.assertEqual(settings.device, "auto")
 
     def test_settings_is_immutable(self):
         settings = parse_training_config(valid_block())
@@ -120,3 +122,26 @@ class TestSchemaValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDeviceResolution(unittest.TestCase):
+    """training.device 'auto' resolves per hardware; explicit devices pass through."""
+
+    def _settings(self, device):
+        return parse_training_config(
+            {"backend": "marl", "trainable_team": "red", "device": device}
+        )
+
+    def test_auto_is_the_default_and_resolves(self):
+        settings = parse_training_config({"backend": "marl", "trainable_team": "red"})
+        self.assertEqual(settings.device, "auto")
+        resolved = settings.resolved_device()
+        expected = "cuda" if torch.cuda.is_available() else "cpu"
+        self.assertEqual(resolved.type, expected)
+
+    def test_explicit_cpu_passes_through(self):
+        self.assertEqual(self._settings("cpu").resolved_device().type, "cpu")
+
+    def test_invalid_device_still_rejected(self):
+        with self.assertRaises(TrainingConfigError):
+            self._settings("not-a-device")

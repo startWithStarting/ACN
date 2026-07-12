@@ -119,7 +119,7 @@ class TeamPPO(OnlineMethod):
         self._feature_dim = int(feature_dim)
         self._privileged_dim = int(privileged_dim)
         self._num_actions = int(num_actions)
-        self._device = torch.device(settings.device)
+        self._device = settings.resolved_device()
         self._buffer = RolloutBuffer(self._team_names)
         self._updates_done = 0
         # Dedicated generator for minibatch permutations so update order is

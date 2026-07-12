@@ -617,7 +617,7 @@ training:
   value_coef: 0.5              # critic loss coefficient
   max_grad_norm: 0.5           # global gradient-norm clip
   seed: 0                      # master seed (python/numpy/torch)
-  device: "cpu"                # torch device
+  device: "auto"               # "auto" (default) -> cuda when available, else cpu
   checkpoint_every: 10         # checkpoint every N updates
   hidden_size: 64              # actor/critic MLP hidden width
   encoder:

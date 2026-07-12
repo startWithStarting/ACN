@@ -4,8 +4,19 @@ Phase 0 of ``docs/communication_implementation_plan.md``: typed configuration
 (:mod:`src.communication.config`), core data types
 (:mod:`src.communication.types`), plan composition and the ``none`` baseline
 (:mod:`src.communication.plans`), and the named-scheme registry/compiler
-(:mod:`src.communication.registry`). No runtime integration yet: environments,
-agents, and entry points do not consume this package.
+(:mod:`src.communication.registry`).
+
+Phase 1 (Radius Graph And One-Hop Direct Delivery): the same-team radius
+topology (:mod:`src.communication.topology`), the common slotted radius
+transport (:mod:`src.communication.transport`), the fixed-round scheduler
+(:mod:`src.communication.runtime`), the engineered bearing-report source
+(:mod:`src.communication.sources`), the inbox-preserving direct processor
+(:mod:`src.communication.processors`), communication trace records
+(:mod:`src.communication.tracing`), and the registered ``one_hop_direct``
+scheme (:mod:`src.communication.schemes`).
+
+No environment integration yet: environments, agents, and entry points do not
+consume this package.
 
 The legacy :class:`CommunicationModel` hierarchy from
 :mod:`src.communication.models` remains re-exported for backward
@@ -64,6 +75,20 @@ from .registry import (
     register_communication_scheme,
 )
 
+# Phase 1: topology, transport, runtime, sources, processors, tracing, schemes.
+from .topology import RadiusTopology
+from .transport import Frame, SlottedRadiusTransport, concat_edge_message_batches
+from .runtime import CachedDelivery, CommunicationRuntime
+from .sources import EngineeredBearingSource, MessageSource
+from .processors import DirectProcessor
+from .tracing import (
+    DELIVERY_RECORD_TYPE,
+    GRAPH_RECORD_TYPE,
+    communication_delivery_records,
+    communication_graph_record,
+)
+from .schemes import build_one_hop_direct
+
 __all__ = [
     # Legacy models (backward compatibility).
     "CommunicationModel",
@@ -106,4 +131,19 @@ __all__ = [
     "create_communication_plan",
     "list_communication_schemes",
     "register_communication_scheme",
+    # Phase 1 runtime components.
+    "RadiusTopology",
+    "Frame",
+    "SlottedRadiusTransport",
+    "concat_edge_message_batches",
+    "CachedDelivery",
+    "CommunicationRuntime",
+    "EngineeredBearingSource",
+    "MessageSource",
+    "DirectProcessor",
+    "DELIVERY_RECORD_TYPE",
+    "GRAPH_RECORD_TYPE",
+    "communication_delivery_records",
+    "communication_graph_record",
+    "build_one_hop_direct",
 ]

@@ -16,10 +16,11 @@ Example:
 
         plan = create_communication_plan(config)
 
-Phase 0 registers only the ``none`` baseline. The other named schemes
-(``one_hop_direct``, ``one_hop_mean``, ``multihop_relay``, ``multihop_gnn``)
-are reserved: compiling them raises ``NotImplementedError`` naming the
-delivery phase that adds them.
+Registered built-in schemes: ``none`` (Phase 0) and ``one_hop_direct``
+(Phase 1, :mod:`src.communication.schemes`). The remaining named schemes
+(``one_hop_mean``, ``multihop_relay``, ``multihop_gnn``) are reserved:
+compiling them raises ``NotImplementedError`` naming the delivery phase that
+adds them.
 """
 
 from __future__ import annotations
@@ -49,7 +50,6 @@ _SCHEME_REGISTRY: Dict[str, SchemeBuilder] = {}
 # mapped to the delivery phase that adds them. They must NOT be registered
 # until that phase lands.
 _PLANNED_SCHEME_PHASES: Dict[str, str] = {
-    "one_hop_direct": "Phase 1 (Radius Graph And One-Hop Direct Delivery)",
     "one_hop_mean": "Phase 2 (PyG Aggregations And Rule-Based Processing)",
     "multihop_relay": "Phase 3 (Multi-Hop Unchanged Relay)",
     "multihop_gnn": "Phase 4 (Learned PyG Communication)",
@@ -273,6 +273,10 @@ def create_communication_plan(config: object) -> CommunicationPlan:
 def _auto_register() -> None:
     """Register built-in communication schemes at import time."""
     register_communication_scheme("none")(build_none_plan)
+    # Imported for its registration side effect (decorator-based, mirroring
+    # src.agents.registry): registers "one_hop_direct".
+    import src.communication.schemes  # noqa: F401
+
     logger.debug("Auto-registered communication schemes: {}", list_communication_schemes())
 
 

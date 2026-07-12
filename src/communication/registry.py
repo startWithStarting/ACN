@@ -50,7 +50,6 @@ _SCHEME_REGISTRY: Dict[str, SchemeBuilder] = {}
 # mapped to the delivery phase that adds them. They must NOT be registered
 # until that phase lands.
 _PLANNED_SCHEME_PHASES: Dict[str, str] = {
-    "multihop_relay": "Phase 3 (Multi-Hop Unchanged Relay)",
     "multihop_gnn": "Phase 4 (Learned PyG Communication)",
 }
 

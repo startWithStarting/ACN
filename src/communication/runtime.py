@@ -20,6 +20,17 @@ Processors may optionally implement ``emit_round(state, graph, round_index,
 context) -> Mapping[str, Sequence[Frame]]`` to emit frames for the *next*
 round (the relay extension point). Processors without it — like the direct
 processor — emit nothing after round 0.
+
+Processors may also implement ``accepted_rows(delivered, graph, round_index,
+context) -> Optional[Sequence[int]]`` — called once per round, immediately
+after ``process_round`` with the same delivered batch — to narrow which
+transported rows count as application-accepted (the duplicate-suppression
+extension point). Only accepted rows enter the receivers' message caches and
+the step's ``delivered_messages`` log, keeping suppressed copies off every
+policy-visible delivery surface. Without the hook, or when it returns
+``None``, every transported row is accepted. The per-round
+``communication_delivery`` trace records always log the full transport,
+including copies a processor suppresses.
 """
 
 from __future__ import annotations
@@ -151,7 +162,7 @@ class CommunicationRuntime:
         step: int,
         round_index: int,
     ) -> None:
-        """Insert one round's deliveries into the receivers' caches, in order."""
+        """Insert one round's accepted deliveries into the receivers' caches, in order."""
         if delivered.num_messages == 0:
             return
         receivers = delivered.receiver_index.tolist()
@@ -214,8 +225,10 @@ class CommunicationRuntime:
         Returns:
             The :class:`CommunicationResult` produced by the processor's
             ``finalize``. The runtime overwrites ``delivered_messages`` with
-            its authoritative concatenation of every round's deliveries and
-            adds ``diagnostics`` entries: ``caches`` (per-agent
+            its authoritative concatenation of every round's
+            application-accepted deliveries (every transported row, unless
+            the processor narrows them through the ``accepted_rows`` hook)
+            and adds ``diagnostics`` entries: ``caches`` (per-agent
             :class:`MessageCache` handles), ``graph``, ``rounds``, and — when
             trace collection is enabled — ``trace_records``.
 
@@ -246,20 +259,30 @@ class CommunicationRuntime:
         current_outboxes: Mapping[str, Sequence[Frame]] = outboxes
         delivered_batches: List[EdgeMessageBatch] = []
         last_delivered: EdgeMessageBatch = EdgeMessageBatch.empty()
+        accepted_rows = getattr(plan.processor, "accepted_rows", None)
         for round_index in range(plan.rounds):
             delivered = plan.transport.transmit_round(
                 current_outboxes, graph, transport_state, round_index, run_context
             )
-            delivered_batches.append(delivered)
             last_delivered = delivered
-
-            # Round-local deliveries enter the caches before the round is
-            # marked complete below.
-            self._insert_deliveries(delivered, graph, step, round_index)
 
             state = plan.processor.process_round(
                 state, delivered, graph, round_index, run_context
             )
+
+            # Application acceptance: a duplicate-suppressing processor (the
+            # accepted_rows hook) narrows which transported rows reach the
+            # caches and the step's delivered log; without it, all rows do.
+            accepted = delivered
+            if callable(accepted_rows) and delivered.num_messages > 0:
+                rows = accepted_rows(delivered, graph, round_index, run_context)
+                if rows is not None:
+                    accepted = delivered.select(rows)
+            delivered_batches.append(accepted)
+
+            # Round-local accepted deliveries enter the caches before the
+            # round is marked complete below.
+            self._insert_deliveries(accepted, graph, step, round_index)
 
             # Double buffering: emissions computed from post-round state are
             # transported in round r + 1, never within round r.
@@ -275,14 +298,17 @@ class CommunicationRuntime:
                 self.cache_for(agent_id).advance_round(step, round_index)
 
             if self._collect_traces:
+                # Delivery records log the full physical transport of the
+                # round, including copies the processor suppressed; relay
+                # records carry the per-copy accept/drop decision.
                 trace_records.extend(
                     communication_delivery_records(delivered, graph, step, self._scheme_name)
                 )
 
         result = plan.processor.finalize(state, last_delivered, graph, run_context)
 
-        # The runtime's transport log is authoritative for the step's
-        # delivered messages, independent of processor bookkeeping.
+        # The runtime's application-accepted log is authoritative for the
+        # step's delivered messages, independent of processor bookkeeping.
         result.delivered_messages = concat_edge_message_batches(delivered_batches)
 
         result.diagnostics["caches"] = {
@@ -291,7 +317,15 @@ class CommunicationRuntime:
         result.diagnostics["graph"] = graph
         result.diagnostics["rounds"] = plan.rounds
         if self._collect_traces:
-            result.diagnostics["trace_records"] = trace_records
+            # Processors may contribute their own records (e.g. the relay
+            # processor's per-decision records) through the
+            # "processor_trace_records" diagnostics key of finalize; they are
+            # appended after the runtime's graph/delivery records.
+            processor_records = result.diagnostics.get("processor_trace_records")
+            if isinstance(processor_records, list):
+                result.diagnostics["trace_records"] = trace_records + processor_records
+            else:
+                result.diagnostics["trace_records"] = trace_records
 
         logger.debug(
             "Communication step {} finished: {} round(s), {} delivered message(s)",

@@ -115,7 +115,10 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
         
         observations = {agent: self._get_observation(agent, self.steps) for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
-        
+        # Bearing-only mode: privileged report-index -> red-name mappings live
+        # in infos, aligned with each blue's contact_reports order.
+        self._attach_ground_truth_infos(infos)
+
         return observations, infos
 
     def step(self, actions):
@@ -203,7 +206,9 @@ class ParallelGameEnv(ParallelEnv, ACNEnvironmentLogic):
 
         # 5. Observations
         observations = {agent: self._get_observation(agent, self.steps) for agent in self.agents}
-        
+        # Bearing-only mode: expose privileged per-report red identities via infos.
+        self._attach_ground_truth_infos(infos)
+
         # 6. Render
         if self.render_mode in ["human", "human_matplotlib", "human_matplotlib_pred", "human_pygame"]:
             self.render()

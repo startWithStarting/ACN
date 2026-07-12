@@ -340,11 +340,13 @@ Supported keys:
 
 * `enabled`: Defaults to `false`. Communication only runs when explicitly
   enabled with a non-`none` scheme.
-* `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`. Reserved for
-  later delivery phases: `one_hop_mean`, `multihop_relay`, `multihop_gnn`.
+* `scheme`: Named scheme. Implemented: `none`, `one_hop_direct`,
+  `one_hop_mean`. Reserved for later delivery phases: `multihop_relay`,
+  `multihop_gnn`.
 * `rounds_per_step` (R): Synchronous communication rounds per movement step,
   run over a graph frozen at the start of the step. One round moves a message
-  at most one graph hop. `one_hop_direct` requires exactly `1`.
+  at most one graph hop. `one_hop_direct` and `one_hop_mean` require
+  exactly `1`.
 * `cache_window` (C): Sliding per-agent message-cache window in rounds. The
   window spans movement-step boundaries; `0` retains nothing. Relay schemes
   must satisfy `cache_window >= processor.ttl`.
@@ -360,9 +362,14 @@ Supported keys:
   `[observer_x, observer_y, direction_x, direction_y]` produced by
   `src.communication.sources.EngineeredBearingSource`.
 * `processor.aggregation`: Must be `none` for `one_hop_direct` (its contract
-  preserves distinct messages); aggregating schemes arrive in Phase 2.
+  preserves distinct messages). `one_hop_mean` requires one of `mean`, `sum`,
+  or `max` — the public `torch_geometric.nn.aggr` module that reduces each
+  agent's delivered inbox to one vector
+  (`src.communication.processors.pyg.PyGAggregationProcessor`); other names
+  are rejected at plan build.
 * `processor.ttl`, `processor.forwarding`, `processor.packet_relay`: Relay
-  settings; rejected for `one_hop_direct` (use `multihop_relay` later).
+  settings; rejected for `one_hop_direct` and `one_hop_mean` (use
+  `multihop_relay` later).
 * `transport.type` / `transport.delivery`: The initial transport is
   `slotted_radius` with `broadcast` delivery and no loss, queues, or cost.
 
@@ -410,6 +417,13 @@ observation["communication"] == {
     "cache_window": 0,            # its configured C window in rounds
 }
 ```
+
+For `one_hop_mean` the `inbox` entry is instead a dict-like
+`AggregatedVectorView` carrying exactly `{"vector", "count"}`: `vector` is the
+agent's aggregated `[4]` torch tensor (zeros when nothing arrived) and `count`
+the number of messages behind it. It serializes to a compact
+`{"type": "AggregatedVector", "count", "dim", "vector"}` summary in trace
+rows.
 
 Reset observations carry the explicit empty view (same shape, zero messages),
 implementing the "no-communication baseline receives an explicit empty view"
@@ -508,9 +522,9 @@ default simulation loop:
   (`create_reward_function`) that is not wired into the environments; the
   runtime uses the legacy attractor-ring reward and blue passive reward by
   default, plus the config-gated benchmark modes described above.
-* `src.communication`'s Phase 1 runtime (radius topology, slotted transport,
-  fixed-round scheduler, and the `one_hop_direct` scheme) is executed by the
-  parallel environment inside `step(actions)` when
+* `src.communication`'s runtime (radius topology, slotted transport,
+  fixed-round scheduler, and the `one_hop_direct`/`one_hop_mean` schemes) is
+  executed by the parallel environment inside `step(actions)` when
   `environment.communication` enables a scheme; communication defaults to
   disabled, and the AEC environment reports enabled communication as
   unsupported. The legacy `src.communication.models` placeholders remain for

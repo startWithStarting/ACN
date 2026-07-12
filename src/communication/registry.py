@@ -16,9 +16,9 @@ Example:
 
         plan = create_communication_plan(config)
 
-Registered built-in schemes: ``none`` (Phase 0) and ``one_hop_direct``
-(Phase 1, :mod:`src.communication.schemes`). The remaining named schemes
-(``one_hop_mean``, ``multihop_relay``, ``multihop_gnn``) are reserved:
+Registered built-in schemes: ``none`` (Phase 0), ``one_hop_direct`` (Phase 1)
+and ``one_hop_mean`` (Phase 2, both :mod:`src.communication.schemes`). The
+remaining named schemes (``multihop_relay``, ``multihop_gnn``) are reserved:
 compiling them raises ``NotImplementedError`` naming the delivery phase that
 adds them.
 """
@@ -50,7 +50,6 @@ _SCHEME_REGISTRY: Dict[str, SchemeBuilder] = {}
 # mapped to the delivery phase that adds them. They must NOT be registered
 # until that phase lands.
 _PLANNED_SCHEME_PHASES: Dict[str, str] = {
-    "one_hop_mean": "Phase 2 (PyG Aggregations And Rule-Based Processing)",
     "multihop_relay": "Phase 3 (Multi-Hop Unchanged Relay)",
     "multihop_gnn": "Phase 4 (Learned PyG Communication)",
 }

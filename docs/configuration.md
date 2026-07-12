@@ -131,6 +131,8 @@ Supported keys used by the current environments:
 * `save_episode_gifs`: Save rendered episode GIFs when a results directory exists
 * `gif_figsize`: Matplotlib figure size for GIF rendering
 * `debug_mode`: Enables extra position-record export in `main_parallel.py`
+* `reward`: Optional per-team reward mode selection (see
+  [Reward Configuration](#reward-configuration))
 
 ## Analysis Configuration
 
@@ -199,13 +201,63 @@ You can override body settings globally with `agent_*` keys, by type with nested
 `red` or `blue` dictionaries, or per agent group with a nested `physics`
 dictionary under that group.
 
+### Reward Configuration
+
+The `environment.reward` section selects the reward mode per team. It is
+optional; when absent, both teams use the `legacy` rewards and runtime behavior
+is unchanged. The `benchmark` modes implement the formulas from
+`docs/communication_decision_log.md` ("Blue Reward Design" and "Red Reward
+Design") and are parsed/computed in `src.env.rewards`.
+
+```yaml
+environment:
+  reward:
+    blue: "benchmark"       # "legacy" (default) | "benchmark"
+    red: "benchmark"        # "legacy" (default) | "benchmark"
+    weights:
+      pin: 0.5              # blue: team pin-coverage weight
+      track: 1.0            # blue: team track-coverage weight
+      shape: 0.1            # blue: individual undercoverage shaping weight
+      score_penalty: 2.0    # blue: REQUIRED when blue is "benchmark"
+      red_score: 1.0        # red: undetected on-ring occupancy weight
+      red_track: 0.5        # red: REQUIRED when red is "benchmark"
+      red_progress: 0.25    # red: REQUIRED when red is "benchmark"
+```
+
+Semantics:
+
+* `blue: "legacy"`: blue agents receive the passive `+0.1` bonus on every step
+  in which no red scores (current behavior).
+* `blue: "benchmark"`: every blue agent `i` receives
+  `pin * pin_coverage + track * track_coverage + shape * shape_i -
+  score_penalty * red_score_fraction`. A red is *pinned* when at least 3 blues
+  detect it, and *tracked* after 3 consecutive pinned steps; coverages and the
+  shaping term are normalized by the number of active reds, and
+  `red_score_fraction` is the number of reds newly scoring this step divided by
+  the initial red count. The benchmark blue reward **replaces** the passive
+  bonus (never both).
+* `red: "legacy"`: a red receives `+1` on every step it occupies the attractor
+  ring undetected (current behavior).
+* `red: "benchmark"`: every red agent `i` receives
+  `red_score * on_ring_undetected_i - red_track * tracked_i + red_progress *
+  (phi(s') - phi(s))` with the potential `phi = -|distance_to_center -
+  ring_radius|` (potential-based progress-to-ring shaping).
+
+The detection state (who detects whom, pin counts, streaks) is computed once
+per step and shared by both teams' benchmark rewards. Benchmark modes are only
+supported by the parallel environment; the AEC environment raises
+`NotImplementedError` when a benchmark mode is configured. Missing required
+weights or unknown keys fail fast at environment construction.
+
 ## Current Runtime Caveats
 
 Several modules are present as extension points but are not yet wired into the
 default simulation loop:
 
-* `src.env.rewards` contains a modular reward factory, but the environments use
-  a hard-coded attractor-ring reward and blue passive reward.
+* `src.env.rewards` also contains an older modular reward factory
+  (`create_reward_function`) that is not wired into the environments; the
+  runtime uses the legacy attractor-ring reward and blue passive reward by
+  default, plus the config-gated benchmark modes described above.
 * `src.communication.models` contains no-op and GNN placeholders, but there is no
   runtime communication channel that delivers messages between agents.
 * `src.env.observation` contains observation builder classes, but the runtime

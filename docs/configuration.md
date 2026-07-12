@@ -165,6 +165,16 @@ Supported keys:
     `infos[<blue name>]["ground_truth_contacts"]` (report index -> red name,
     aligned with the report order) for tracking metrics and evaluation. Red
     team observations are unchanged.
+
+    Combining `bearing_only` with `environment.communication` works: the
+    engineered message source (`EngineeredBearingSource`) builds each blue's
+    outgoing frames directly from its `contact_reports` payloads (unchanged;
+    frame order = report order), so blues still emit one anonymous bearing
+    report per visible red. Because reports carry no opponent identity, those
+    frames have an empty privileged mapping — ground-truth evaluation joins
+    through `infos[<blue name>]["ground_truth_contacts"]` instead of frame
+    metadata. Red team frames still come from the `blue_agents` position
+    mapping and are unaffected.
 * `scripted_blue_privileged`: Defaults to `true`; only meaningful with
   `blue_sensor: bearing_only`. When true, blue observations additionally carry
   `privileged_red_agents` (the legacy dict) so scripted blue controllers such
@@ -438,7 +448,11 @@ on the frozen pre-move state, per the runtime model in
 2. The payload source derives each agent's outbox from its own observation
    only (`src.communication.sources.EngineeredBearingSource` for
    `engineered_vector`: one anonymous 4-float bearing report per locally
-   visible opponent).
+   visible opponent). It reads either the visible-opponent position mapping
+   (`red_agents`/`blue_agents`) or, when `environment.observation.blue_sensor`
+   is `bearing_only`, the observation's `contact_reports` payloads directly
+   (see [Observation Configuration](#observation-configuration)); privileged
+   fields such as `privileged_red_agents` are never read.
 3. `CommunicationRuntime.run_step` builds the frozen same-team radius graph
    and runs the `R` synchronous rounds; deliveries enter the per-agent
    message caches.

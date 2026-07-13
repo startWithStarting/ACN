@@ -92,6 +92,14 @@ or neither are rejected).
 | Blue learns (learned comms) | `config/benchmark_blue_mappo_gnn.yaml` | As above with end-to-end GraphSAGE communication | Avoidant reds |
 | Red learns | `config/benchmark_red_mappo.yaml` | Red: benchmark dwell/evasion reward | VAR-pursuit blues (privileged observation channel) |
 
+The training stack is deliberately **algorithm-agnostic**: the common method
+interface, the per-step transition contract, and the discrete action space form
+a fixed comparison surface so that training algorithms — policy-gradient,
+value-based, model-based, or non-gradient baselines like the VAR controller —
+can be benchmarked against each other on identical scenarios, observations, and
+rewards. PPO is the first implementation; new algorithms plug into the same
+interface without touching the environment API.
+
 Components:
 
 * `src/training/marl/`: The TorchRL-backed team-selection trainer

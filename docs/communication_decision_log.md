@@ -674,6 +674,19 @@ transition ingestion, update readiness, optimization, and checkpointing. It does
 not standardize network architecture, storage type, loss function, or update
 schedule across algorithm families.
 
+Decision: the training stack is built so that training algorithms can be
+benchmarked against each other. The method interface, the per-step transition
+contract, and the discrete action space together form a fixed comparison
+surface: every method family — on-policy policy gradient (PPO/IPPO/MAPPO),
+value-based, model-based/world-model, and non-gradient baselines such as the
+VAR pursuit controller — implements the same interface and consumes identical
+observations, transitions, rewards, and actions. Adding a new algorithm must
+not require changing the environment API, the benchmark scenarios, or the
+reward definitions, so that measured differences between algorithms are
+attributable to the algorithms rather than the harness. PPO is the only
+implemented method at this stage; this constraint governs how every future
+method is added.
+
 Decision: actor parameter assignment and critic information scope are
 independent configuration axes.
 

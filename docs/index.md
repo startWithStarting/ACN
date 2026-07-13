@@ -4,7 +4,7 @@
 designed for researching communication protocols and distributed control
 mechanisms in autonomous agent systems.
 
-![ACN Architecture](../UMLdiagram.svg)
+![ACN simulation demo](media/acn_demo.gif)
 
 ## Overview
 

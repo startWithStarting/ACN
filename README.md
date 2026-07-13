@@ -2,7 +2,13 @@
 
 A multi-agent simulation framework for researching communication protocols, CTDE and distributed control in autonomous agent systems with limited sensing, observability and communication.
 
-![ACN Architecture](UMLdiagram.svg)
+![ACN simulation: blue trackers pursue evading reds using VAR trajectory predictions](docs/media/acn_demo.gif)
+
+*Live simulation (12 blue vs 12 red, `config/readme_demo_config.yaml`): red agents
+evade while trying to reach the grid center; blue agents track and pursue them.
+Green markers are each blue's VAR-predicted future red positions; the orange
+circle marks the central attractor zone. Regenerate with
+`uv run python run.py --mode parallel --config config/readme_demo_config.yaml`.*
 
 ## Overview
 
@@ -202,6 +208,48 @@ You can also ingest from the host Python environment:
 uv run python -m src.storage.ingest \
   --run-dir results/experiment/basic_comm_test_YYYYMMDD_HHMMSS_parallel
 ```
+
+## Architecture
+
+```mermaid
+flowchart TB
+    CFG["Scenario YAML<br/>config/"] --> RUN["run.py"]
+    RUN -- "--mode parallel / aec" --> ENV
+    RUN -- "--mode train<br/>backend: marl" --> TR
+
+    subgraph ENV["PettingZoo environment (src/env)"]
+        LOGIC["ACNEnvironmentLogic<br/>observations · rewards · action decoding"]
+        PHYS["Physics engine<br/>collisions · drag · obstacles · fields"]
+        COMM["Communication runtime<br/>R rounds · frozen radius graph · C-round cache"]
+        LOGIC --> PHYS
+        LOGIC --> COMM
+    end
+
+    REG["Agent factory + registries<br/>scripted strategies"] --> ENV
+
+    subgraph SCHEMES["Communication schemes (src/communication)"]
+        ENG["Engineered<br/>one_hop_direct · one_hop_mean · multihop_relay"]
+        GNN["Learned<br/>multihop_gnn GraphSAGE"]
+    end
+    ENG --> COMM
+    GNN --> TR
+
+    subgraph TR["MARL trainer (src/training/marl)"]
+        ENCS["Policy encoders<br/>contacts · comm views · no privileged fields"]
+        PPO["PPO<br/>shared/separate actor x local/global critic"]
+        ENCS --> PPO
+    end
+    TR <-->|"trainable-team actions / transitions"| ENV
+
+    ENV --> RECR["Recorder<br/>JSONL traces or Postgres"]
+    RECR --> API["FastAPI trace service"]
+    TR --> OUT["Checkpoints + metrics"]
+    MODAL["Modal GPU<br/>infra/"] -.-> TR
+```
+
+Engineered communication executes inside the environment step; the learned
+`multihop_gnn` scheme executes inside the trainer's actor forward pass — the
+environment never runs differentiable communication.
 
 ## Project Structure
 

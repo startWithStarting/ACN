@@ -52,8 +52,9 @@ uv run python run.py --mode aec --config config/experiment_config.yaml
 # Persist simulation trace directly to Postgres
 uv run python run.py --mode parallel --config config/experiment_config.yaml --persist
 
-# Run PPO training mode
-uv run python run.py --mode train --config config/avoidant_config.yaml
+# Run training mode (training.backend: "marl" selects the TorchRL MARL
+# trainer; other configs keep the legacy SB3 red-team path)
+uv run python run.py --mode train --config config/benchmark_blue_mappo.yaml
 
 ```
 `main.py` and `main_parallel.py` remain available as compatibility wrappers,
@@ -76,9 +77,10 @@ The API is served on `http://localhost:8000`, and Postgres is exposed on
 `localhost:5432`. The API container is intentionally lightweight and focused on
 trace querying, ingestion, and on-demand plotting; simulation and training runs
 are normally launched from the host `uv` environment.
-## Google Cloud Setup
+## Remote Training
 
-See `docs/gcp_setup.md` for running on Google Cloud Platform.
+Remote training currently runs on Modal; see `infra/README.md`. GCP (see
+`docs/gcp_setup.md`) via SkyPilot is the documented scale-out path.
 
 ## Updating Dependencies
 

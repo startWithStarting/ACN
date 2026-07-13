@@ -6,12 +6,17 @@ description of implemented runtime behavior.
 
 ## Current Runtime Context
 
-- ACN currently builds local observations in the environment and uses scripted
-  blue/red strategies by default.
-- `src.communication.models` is still a placeholder layer; there is not yet a
-  runtime communication channel.
-- The communication implementation details are planned in
-  [Communication Implementation Plan](communication_implementation_plan.md).
+Updated 2026-07: phases 0 through 4 of the
+[Communication Implementation Plan](communication_implementation_plan.md) are
+implemented. `src.communication` provides the runtime (radius topology,
+slotted transport, fixed-round scheduler, message caches) and the registered
+schemes `none`, `one_hop_direct`, `one_hop_mean`, `multihop_relay`, and
+`multihop_gnn`; the parallel environment executes the engineered schemes
+inside `step(actions)` and the MARL trainer runs the differentiable
+`multihop_gnn` inside the actor. `src.communication.models` is a legacy
+placeholder layer kept for backward compatibility. The decision sections below
+are the design record those implementations follow; they are kept as decided,
+not rewritten to match the code.
 
 ## Observation Contract
 

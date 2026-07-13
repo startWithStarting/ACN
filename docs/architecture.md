@@ -25,8 +25,8 @@ src/
 │   ├── engine.py
 │   ├── obstacles.py
 │   └── fields.py
-├── communication/    # Agent communication models
-├── training/         # RL training framework
+├── communication/    # Communication runtime (schemes, topology, transport, processors)
+├── training/         # RL training (marl/ TorchRL trainer + legacy SB3 path)
 ├── benchmark/        # Performance benchmarking
 ├── analysis/         # File-backed trace reconstruction and plotting
 ├── api/              # FastAPI trace query and plotting service
@@ -57,6 +57,40 @@ The environment follows the PettingZoo API with two implementations:
 Common logic is extracted into `ACNEnvironmentLogic` mixin to reduce duplication.
 The current runtime builds observations, applies movement, computes rewards, and
 renders through this mixin.
+
+The parallel environment additionally executes the configured communication
+scheme inside `step(actions)` (see Communication below); the AEC environment
+raises `NotImplementedError` when communication or a benchmark reward mode is
+enabled.
+
+### Communication
+
+`src/communication` implements the benchmark communication runtime from
+`docs/communication_implementation_plan.md`. A named scheme configured under
+`environment.communication` is compiled into a `CommunicationPlan` (topology,
+transport, processor, `R` rounds per step, `C`-round message cache) by the
+scheme registry. Execution ownership depends on differentiability:
+
+* **Engineered schemes** (`one_hop_direct`, `one_hop_mean`, `multihop_relay`)
+  run inside `ParallelGameEnv.step()` before movement, over a same-team radius
+  graph frozen at the pre-move positions. Deliveries land in per-agent message
+  caches and are attached to the NEXT observation under a `communication` key.
+* **The differentiable scheme** (`multihop_gnn`) is compiled and validated by
+  the environment but never executed there: the MARL trainer runs the
+  GraphSAGE message-passing rounds inside the actor's forward pass so
+  gradients reach the message functions. Observations carry no
+  `communication` key for this scheme.
+
+### Training
+
+`src/training/marl` is the TorchRL-backed MARL trainer (`run.py --mode train`
+with `training.backend: "marl"`). It binds one PPO algorithm to exactly one
+trainable team (blue or red) against the scripted opponent team, supporting
+shared or separate actors and local critics (IPPO) or one central critic over
+training-only privileged simulator state (MAPPO-style CTDE). The privileged
+tensor never reaches an actor. Runs are seeded, headless, and checkpointed
+with exact resume. The legacy SB3 red-team parameter-sharing path
+(`src/training/trainer.py`) remains for backward compatibility.
 
 ### Physics Engine
 
@@ -101,16 +135,21 @@ Simulation, persistence, and analysis are intentionally separated:
 * The FastAPI service reads from Postgres and creates plot artifacts on demand.
 * File-backed traces can still be ingested later with `src.storage.ingest`.
 
-The repository contains several research-facing abstractions that are not yet
-fully connected to the live simulation:
+Implementation status of the research-facing subsystems:
 
-* `src.communication.models` defines no-op and GNN communication model classes,
-  but no environment-level message channel exists yet.
-* `src.env.rewards` defines configurable reward functions, but the environments
-  currently use hard-coded attractor-ring scoring and a blue passive reward.
-* `src.training` provides PPO integration for red-agent parameter sharing, but
-  does not yet implement centralized critics, learned communication, or opponent
-  modeling.
+* `src.communication` provides the live runtime described above; the parallel
+  environment executes engineered schemes and the MARL actor executes the
+  differentiable one. The older `src.communication.models` classes are a
+  legacy placeholder layer kept for backward compatibility.
+* `src.env.rewards` provides the config-gated benchmark reward modes
+  (`environment.reward`, parallel environment only) alongside the default
+  legacy attractor-ring scoring and blue passive reward. The older
+  `create_reward_function()` factory is still not wired into the environments.
+* `src.training.marl` implements CTDE (MAPPO-style privileged central critic),
+  IPPO-style local critics, and both learning directions (trainable blue or
+  trainable red) plus learned communication for `multihop_gnn`. Opponent
+  modeling is not implemented. The legacy SB3 red-team path remains as a
+  compatibility adapter.
 
 ## Extensibility
 

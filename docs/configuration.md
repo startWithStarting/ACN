@@ -759,10 +759,12 @@ default simulation loop:
   runtime uses the legacy attractor-ring reward and blue passive reward by
   default, plus the config-gated benchmark modes described above.
 * `src.communication`'s runtime (radius topology, slotted transport,
-  fixed-round scheduler, and the `one_hop_direct`/`one_hop_mean` schemes) is
-  executed by the parallel environment inside `step(actions)` when
-  `environment.communication` enables a scheme; communication defaults to
-  disabled, and the AEC environment reports enabled communication as
+  fixed-round scheduler, and the engineered `one_hop_direct`/`one_hop_mean`/
+  `multihop_relay` schemes) is executed by the parallel environment inside
+  `step(actions)` when `environment.communication` enables a scheme; the
+  differentiable `multihop_gnn` plan is compiled and validated by the
+  environment but executed only inside the MARL actor. Communication defaults
+  to disabled, and the AEC environment reports enabled communication as
   unsupported. The legacy `src.communication.models` placeholders remain for
   backward compatibility.
 * `src.env.observation` contains observation builder classes, but the runtime

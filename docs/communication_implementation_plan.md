@@ -2,10 +2,26 @@
 
 ## Status
 
-This document defines the planned communication architecture for ACN. It is an
-implementation plan, not a description of the current runtime. At present,
-`src.communication.models` contains placeholders and neither PettingZoo
-environment executes communication rounds.
+This document is the reference specification for ACN's communication
+architecture. As of 2026-07, delivery phases 0 through 4 are implemented in
+`src.communication` and integrated with the parallel environment and the MARL
+trainer:
+
+- Phase 0: typed config, core data types, plan registry, and the `none` plan.
+- Phase 1: radius topology, slotted transport, fixed-round runtime, engineered
+  bearing payloads, `one_hop_direct`, parallel-env integration, and traces.
+- Phase 2: PyG aggregation processing and the `one_hop_mean` scheme.
+- Phase 3: first-seen unchanged relay with TTL and duplicate suppression
+  (`multihop_relay`) and protocol traces.
+- Phase 4: learned GraphSAGE communication (`multihop_gnn`), executed inside
+  the MARL actor's forward pass with differentiable rollout reconstruction.
+
+Phases 5 through 7 (communication as an explicit RL action, protocol realism,
+distributed and text communication) remain future work. The AEC environment
+does not execute communication and raises when a scheme is enabled.
+`src.communication.models` remains a legacy placeholder layer kept for
+backward compatibility. The sections below are kept intact as the design
+contract the implementation follows.
 
 The plan is based on the following agreed design decisions:
 

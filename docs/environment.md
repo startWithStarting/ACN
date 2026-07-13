@@ -24,6 +24,10 @@ ACN supports both PettingZoo execution styles:
 Both implementations share most behavior through `ACNEnvironmentLogic`
 ([source](../src/env/common_env_logic.py)).
 
+The benchmark features are parallel-only: `AECGameEnv` raises
+`NotImplementedError` when `environment.communication` enables a scheme or
+when a benchmark reward mode is configured.
+
 ## Common Runtime Logic
 
 `ACNEnvironmentLogic` is responsible for:
@@ -68,10 +72,19 @@ protocol and factory:
 * `create_reward_function()`
 
 The current `AECGameEnv` and `ParallelGameEnv` do not call
-`create_reward_function()`. They use a fixed attractor-ring rule: red agents
-score when their distance from the grid center is close to `50.0` and they are
-not inside any active blue agent's detection radius. If no red agent scores in a
-step/cycle, active blue agents receive a passive reward of `0.1`.
+`create_reward_function()`. By default they use a fixed attractor-ring rule:
+red agents score when their distance from the grid center is close to `50.0`
+and they are not inside any active blue agent's detection radius. If no red
+agent scores in a step/cycle, active blue agents receive a passive reward of
+`0.1`.
+
+The optional `environment.reward` section switches either team to the
+config-gated benchmark reward mode (dense team/individual blue terms and
+score/track/progress red terms), computed by `blue_benchmark_reward()` and
+`red_benchmark_reward()` in `src.env.rewards` over a shared per-step
+`DetectionState`. Benchmark modes are supported by the parallel environment
+only; `AECGameEnv` raises `NotImplementedError` when one is configured. See
+[Reward Configuration](configuration.md#reward-configuration).
 
 ## Action Space
 
@@ -80,7 +93,15 @@ Built-in agents output continuous action dictionaries:
 * `direction`: 2D normalized vector `[x, y]`
 * `speed`: scalar value or one-element array
 
-The declared action space allows speed values in `[0, 10]`. Movement is applied
+The optional `environment.action_space` section instead declares one flat
+`Discrete(N)` movement space per agent (evenly spaced headings x speed
+levels); integer actions are decoded through that spec, and dict actions
+remain accepted in both modes. The discrete space is required by the MARL
+trainer. See
+[Action Space Configuration](configuration.md#action-space-configuration).
+
+In the default continuous mode the declared action space allows speed values
+in `[0, max_speed]` (default `10`). Movement is applied
 through `PhysicsEngine` by default. The default `physics.control_mode` is
 `velocity`, which treats `direction * speed` as a desired velocity for the
 current step, then applies physics boundaries, collisions, obstacles, and force
@@ -102,6 +123,16 @@ Returned observations are dictionaries containing:
   the observing red agent uses `strategy_type: "flocking"`
 
 Visibility is limited by the observing agent's `detection_radius`.
+
+Two config-gated additions change this layout:
+
+* `environment.observation.blue_sensor: "bearing_only"` replaces the blue
+  `red_agents` dict with anonymous `contact_reports` (see
+  [Observation Configuration](configuration.md#observation-configuration)).
+* When the parallel environment executes a communication scheme, every
+  observation additionally carries a `communication` key with the agent's
+  delivered-message view (see
+  [Communication Configuration](configuration.md#communication-configuration)).
 
 The declared Gymnasium observation space currently covers only the base fields
 (`position`, `grid_center`, and `timestamp`). Returned observations include

@@ -32,6 +32,18 @@ uv run python -m pytest tests/test_physics.py -v
 uv run python -m pytest --cov=src tests/
 
 ```
+## Merge Gate
+
+Run the full gate before committing implementation work:
+
+```bash
+./scripts/gate.sh
+```
+
+It runs, in order: `ruff check .`, the full `run_tests.py` suite, and the
+golden-trace regression check (`scripts/golden_traces.py --check`). The gate
+must pass before a commit lands on `main`.
+
 ## Code Style
 
 ACN follows these conventions:
@@ -105,18 +117,21 @@ def calculate_distance(
 
 ## Adding New Runtime Capabilities
 
-Several subsystems already have standalone modules but still need environment
-integration:
-
-* For configurable rewards, connect `src.env.rewards.create_reward_function` to
-  `ACNEnvironmentLogic._calculate_reward` and document the resulting YAML keys.
+* For rewards, the config-gated benchmark modes live in `src.env.rewards`
+  behind `environment.reward` (parallel environment only); new reward terms
+  should extend that path. The older `create_reward_function()` factory is
+  still not wired into the environments.
 * For richer movement, extend the existing `PhysicsEngine` integration with
   scenario-specific body settings, fields, obstacles, and inertial controls.
-* For communication experiments, add an environment-level channel that calls
-  `CommunicationModel.select_communication_partners` and `process_messages`
-  before action selection.
-* For training research, prefer centralized-training/decentralized-execution
-  baselines before adding specialized communication mechanisms.
+* For communication experiments, add a new scheme builder registered with
+  `src.communication.registry.register_communication_scheme` and import it
+  from `src.communication.schemes` (mirroring the agent-strategy registry
+  pattern). Differentiable schemes must mark their plans as such so the
+  environment never executes them. `src.communication.models` is legacy; do
+  not build on it.
+* For training research, extend the TorchRL MARL trainer (`src.training.marl`)
+  — e.g. new `OnlineMethod` implementations behind the `training:` config
+  block — rather than the legacy SB3 path.
 
 ## Contributing
 
@@ -131,9 +146,12 @@ integration:
 * `src/agents/`: Agent implementations
 * `src/env/`: PettingZoo environments
 * `src/physics/`: Physics simulation
-* `src/training/`: RL training utilities
+* `src/communication/`: Communication runtime and schemes
+* `src/training/`: RL training (`marl/` TorchRL trainer + legacy SB3 path)
 * `src/benchmark/`: Performance metrics
 * `src/utils/`: Helper functions
 * `config/`: YAML configuration files
+* `infra/`: Remote training on Modal
+* `scripts/`: Merge gate (`gate.sh`) and golden-trace tooling
 * `tests/`: Unit tests
 * `docs/`: Documentation

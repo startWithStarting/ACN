@@ -55,10 +55,15 @@ Red agents currently support:
 * Detection checks through `is_within_detection_radius()`
 * Teammate movement history through `record_teammate_movement()`
 * Strategy dispatch through `choose_action()`
-* A `trainable` placeholder mode for externally supplied policies
+* A `trainable` mode for externally supplied policies
 
-The `trainable` strategy returns a no-op if `choose_action()` is called directly;
-it is intended to be controlled by an external training wrapper.
+Agents with `strategy_type: "trainable"` keep no policy of their own:
+`choose_action()` returns a no-op, and a trainer supplies their actions
+through `env.step()` instead. The MARL trainer (`src.training.marl`, see
+[Configuration](configuration.md#training-configuration)) supplies actions for
+every agent of the configured `trainable_team` this way — a trainable-team
+agent's configured strategy is simply never invoked — and the legacy SB3
+wrapper drives `trainable` red agents the same way.
 
 ## Red Strategies
 
@@ -71,7 +76,7 @@ Red strategy implementations are in `src/agents/strategies/`.
 | Aggressive | `aggressive` | [`aggressive_red_strategy.py`](../src/agents/strategies/aggressive_red_strategy.py) | Blend center seeking with pursuit of the nearest visible blue agent. |
 | Team | `team` | [`team_based_red_strategy.py`](../src/agents/strategies/team_based_red_strategy.py) | Move toward visible red teammates while avoiding blue agents. |
 | Flocking | `flocking` | [`flocking_red_strategy.py`](../src/agents/strategies/flocking_red_strategy.py) | Use cohesion, alignment, separation, inertia, and wall avoidance. |
-| Trainable | `trainable` | [`red_agent.py`](../src/agents/red_agent.py) | Placeholder for external policies; direct calls return no movement. |
+| Trainable | `trainable` | [`red_agent.py`](../src/agents/red_agent.py) | Actions come from an external trainer via `env.step()`; direct calls return no movement. |
 
 ## Agent Factory
 

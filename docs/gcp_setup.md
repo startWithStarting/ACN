@@ -1,5 +1,10 @@
 # Deploying ACN Training to Google Cloud Platform (Vertex AI)
 
+> **Note:** remote training currently runs on Modal — see
+> [`infra/README.md`](../infra/README.md). GCP via SkyPilot is the documented
+> scale-out path if runs outgrow Modal; the Vertex AI recipe below is kept for
+> reference.
+
 This guide explains how to run your PPO training loop on Google Cloud using Vertex AI Custom Training Jobs. This is ideal for using your $300 Free Trial credits.
 
 ## Prerequisites

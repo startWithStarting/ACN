@@ -13,6 +13,7 @@ the source links.
 | `src.agents.red_agent` | `RedAgent` | [`red_agent.py`](../src/agents/red_agent.py) |
 | `src.agents.factory` | `create_agents_from_config()` | [`factory.py`](../src/agents/factory.py) |
 | `src.agents.registry` | `register_agent()`, `register_strategy()`, `create_agent()`, `get_strategy()`, `list_agent_types()`, `list_strategies()` | [`registry.py`](../src/agents/registry.py) |
+| `src.agents.action_spaces` | `ActionSpaceConfig`, `DiscreteMovementSpec`, `build_movement_action_space()`, `build_continuous_movement_space()`, `build_discrete_movement_spec()` | [`action_spaces.py`](../src/agents/action_spaces.py) |
 
 Strategy modules:
 
@@ -34,7 +35,13 @@ Strategy modules:
 | `src.env.aec_env` | `env()`, `AECGameEnv` | [`aec_env.py`](../src/env/aec_env.py) |
 | `src.env.common_env_logic` | `ACNEnvironmentLogic` | [`common_env_logic.py`](../src/env/common_env_logic.py) |
 | `src.env.observation` | `ObservationBuilder`, `BlueObservationBuilder`, `RedObservationBuilder`, `FlockingObservationBuilder`, `create_observation_builder()` | [`observation.py`](../src/env/observation.py) |
-| `src.env.rewards` | `RewardFunction`, `AttractorRewardConfig`, `AttractorReward`, `DistanceReward`, `DetectionReward`, `CompositeReward`, `create_reward_function()` | [`rewards.py`](../src/env/rewards.py) |
+| `src.env.rewards` | `RewardFunction`, `AttractorRewardConfig`, `AttractorReward`, `DistanceReward`, `DetectionReward`, `CompositeReward`, `create_reward_function()`, `RewardSettings`, `parse_reward_settings()`, `DetectionState`, `build_detection_state()`, `blue_benchmark_reward()`, `red_benchmark_reward()` | [`rewards.py`](../src/env/rewards.py) |
+
+The config-gated benchmark reward modes (`environment.reward`) are computed by
+the `*_benchmark_reward()` functions over a shared per-step `DetectionState`;
+they are supported by the parallel environment only (the AEC environment raises
+`NotImplementedError`). See
+[Reward Configuration](configuration.md#reward-configuration).
 
 ## Physics
 
@@ -46,23 +53,66 @@ Strategy modules:
 
 ## Communication
 
+`src.communication` is the benchmark communication runtime: named schemes are
+compiled from `environment.communication` into a `CommunicationPlan` and, for
+the engineered (non-differentiable) schemes, executed by `ParallelGameEnv`
+inside every `step(actions)`. Deliveries reach each agent as the
+`"communication"` key of its next observation; the differentiable
+`multihop_gnn` scheme instead runs inside the MARL actor's forward pass and
+adds no observation key. See
+[Communication Configuration](configuration.md#communication-configuration).
+
 | Module | Public API | Source |
 | --- | --- | --- |
+| `src.communication.config` | `CommunicationConfig`, `ConfigError`, `parse_communication_config()`, `TopologyConfig`, `TransportConfig`, `ProcessorConfig`, `PayloadConfig` | [`config.py`](../src/communication/config.py) |
+| `src.communication.types` | `CommunicationGraph`, `CommunicationResult`, `EdgeMessageBatch`, `InboxBatch`, `PacketBatch`, `MessageCache`, `CacheEntry` | [`types.py`](../src/communication/types.py) |
+| `src.communication.plans` | `CommunicationPlan`, `CommunicationTopology`, `RoundTransport`, `CommunicationProcessor`, `build_none_plan()` | [`plans.py`](../src/communication/plans.py) |
+| `src.communication.registry` | `register_communication_scheme()`, `create_communication_plan()`, `list_communication_schemes()` | [`registry.py`](../src/communication/registry.py) |
+| `src.communication.schemes` | `build_one_hop_direct()`, `build_one_hop_mean()`, `build_multihop_relay()`, `build_multihop_gnn()`, `DifferentiableCommunicationMarker` | [`schemes.py`](../src/communication/schemes.py) |
+| `src.communication.topology` | `RadiusTopology` | [`topology.py`](../src/communication/topology.py) |
+| `src.communication.transport` | `Frame`, `SlottedRadiusTransport` | [`transport.py`](../src/communication/transport.py) |
+| `src.communication.runtime` | `CommunicationRuntime`, `CachedDelivery` | [`runtime.py`](../src/communication/runtime.py) |
+| `src.communication.sources` | `MessageSource`, `EngineeredBearingSource`, `create_message_source()` | [`sources.py`](../src/communication/sources.py) |
+| `src.communication.processors` | `DirectProcessor`, `PyGAggregationProcessor`, `RelayProcessor`, `RelayCarryoverTransport`, `GraphSAGECommunicator` | [`processors/`](../src/communication/processors/__init__.py) |
+| `src.communication.tracing` | `communication_graph_record()`, `communication_delivery_records()` | [`tracing.py`](../src/communication/tracing.py) |
 | `src.communication.models` | `CommunicationModel`, `GNNCommunicationModel`, `NoCommunicationModel` | [`models.py`](../src/communication/models.py) |
 
-`GNNCommunicationModel` is a placeholder and currently raises
-`NotImplementedError`. Runtime environments do not yet provide a message channel.
+Registered schemes: `none`, `one_hop_direct`, `one_hop_mean`, `multihop_relay`,
+and `multihop_gnn` (differentiable; the environment validates its plan but
+never executes it — the trainer runs `GraphSAGECommunicator` in the actor).
+The AEC environment raises `NotImplementedError` when communication is enabled.
+
+`src.communication.models` is the legacy pre-runtime layer, kept only for
+backward compatibility; `GNNCommunicationModel` remains a placeholder that
+raises `NotImplementedError`. New code should target the scheme registry above.
 
 ## Training
 
+`run.py --mode train` routes on `training.backend`: `"marl"` selects the
+TorchRL-backed team trainer in `src.training.marl`; any other value keeps the
+legacy Stable-Baselines3 path. See
+[Training Configuration](configuration.md#training-configuration).
+
 | Module | Public API | Source |
 | --- | --- | --- |
+| `src.training.marl.config` | `TrainingSettings`, `EncoderSettings`, `TrainingConfigError`, `parse_training_config()` | [`config.py`](../src/training/marl/config.py) |
+| `src.training.marl.contract` | `OnlineMethod`, `ScriptedTeamMethod`, `ActionSelection`, `TeamTransition` | [`contract.py`](../src/training/marl/contract.py) |
+| `src.training.marl.encoders` | `PolicyEncoder`, `PRIVILEGED_OBSERVATION_KEYS` | [`encoders.py`](../src/training/marl/encoders.py) |
+| `src.training.marl.adapters` | `encode_team_observations()`, `build_privileged_state()`, `actions_to_env()`, `build_team_communication_graph()`, `attach_communication_inputs()` | [`adapters.py`](../src/training/marl/adapters.py) |
+| `src.training.marl.buffer` | `RolloutBuffer` | [`buffer.py`](../src/training/marl/buffer.py) |
+| `src.training.marl.ppo` | `TeamPPO`, `GnnCommSettings` | [`ppo.py`](../src/training/marl/ppo.py) |
+| `src.training.marl.runner` | `MarlTrainingRunner`, `run_marl_training()` | [`runner.py`](../src/training/marl/runner.py) |
 | `src.training.trainer` | `RedTeamWrapper`, `Trainer` | [`trainer.py`](../src/training/trainer.py) |
 | `src.training.base_trainer` | `BaseTrainer`, `SB3Trainer`, `RLlibTrainer`, `create_trainer()` | [`base_trainer.py`](../src/training/base_trainer.py) |
 
-The current training path provides PPO integration for red-agent parameter
-sharing. It does not yet implement CTDE, centralized critics, learned
-communication, or opponent modeling.
+The MARL trainer implements single-team PPO (IPPO/MAPPO) for exactly one
+trainable team (`trainable_team: blue` or `red`) against a scripted opponent
+team: shared or separate actors, local critics (IPPO) or one central critic
+over the training-only privileged simulator state (MAPPO/CTDE), seeded
+deterministic runs, checkpoint/resume, and in-actor differentiable
+communication for `multihop_gnn`. `src.training.trainer` and
+`src.training.base_trainer` are the legacy SB3 red-team parameter-sharing
+path, retained for backward compatibility.
 
 ## Benchmark
 

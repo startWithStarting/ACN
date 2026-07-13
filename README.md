@@ -26,10 +26,14 @@ ACN is built on [PettingZoo](https://github.com/Farama-Foundation/PettingZoo) an
 
 ### Agent Types
 
+Either team can be driven two ways: by a **scripted strategy** configured per agent
+group (tables below), or by the **MARL trainer**, which bypasses strategies entirely
+and supplies the trainable team's actions each step (see Training).
+
 | Agent | Description |
 |-------|-------------|
-| **Blue** | Defensive agent with prediction capabilities. Uses Vector Auto-Regressive (VAR) models to predict red agent trajectories. |
-| **Red** | Mobile agent with configurable behavior. Can pursue, avoid, flock, or target the grid center. |
+| **Blue** | Defensive/tracking agent. Scripted blues use Vector Auto-Regressive (VAR) models to predict red trajectories and pursue them; a learned blue is trained by the MARL trainer instead (optionally under bearing-only sensing and communication). |
+| **Red** | Mobile agent whose objective is reaching the scoring ring undetected. Scripted reds can pursue, avoid, flock, or target the grid center; a learned red is trained by the MARL trainer. |
 
 ### Red Agent Strategies
 
@@ -37,11 +41,12 @@ Located in `src/agents/strategies/`:
 
 | Strategy | Description |
 |----------|-------------|
-| `center` | Move toward grid center, maintaining 10-unit minimum distance |
+| `center` | Move toward grid center, maintaining 10-unit minimum distance (default) |
 | `avoidant` | Detect and steer away from blue agents |
 | `aggressive` | Pursue the nearest blue agent |
 | `team` | Move toward average position of visible red teammates |
 | `flocking` | Full boids-style behavior (cohesion, alignment, separation) |
+| `trainable` | No scripted behavior; actions are supplied externally (the MARL trainer drives every trainable-team agent regardless of its configured strategy) |
 
 ### Blue Agent Strategies
 
@@ -50,7 +55,10 @@ Located in `src/agents/blue_strategies/`:
 | Strategy | Description |
 |----------|-------------|
 | `static` | Remain stationary, continue tracking |
-| `pursuit` | Move toward average predicted red position |
+| `pursuit` | Move toward average VAR-predicted red position (the scripted opponent baseline when red is the trainable team) |
+
+Blue has no `trainable` strategy entry: when blue is the trainable team the
+trainer supplies actions directly and the configured strategy is never invoked.
 
 ### Communication Schemes
 

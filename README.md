@@ -16,8 +16,9 @@ ACN is built on [PettingZoo](https://github.com/Farama-Foundation/PettingZoo) an
   one-hop delivery to multi-hop relay and learned GraphSAGE message passing
 * **Limited Sensing**: Config-gated bearing-only blue sensor producing anonymous contact
   reports, with ground-truth identities preserved for evaluation only
-* **MARL Training**: A TorchRL-backed MAPPO/IPPO trainer (shared/separate actors x
-  local/global critics) that trains exactly one team per run against scripted opponents
+* **MARL Training**: A TorchRL-backed MAPPO/IPPO trainer supporting both learning
+  directions — learned blue vs scripted red, or learned red vs the scripted
+  VAR-pursuit blue — with exactly one trainable team per run
 * **Run Traces**: Training-oriented traces for observations, actions, rewards, states, and blue-agent prediction events, written either as local JSONL files or directly to Postgres
 * **Benchmarking**: Scenario-comparison scaffolding and basic metrics
 
@@ -70,19 +71,50 @@ See `docs/communication_decision_log.md` for the design record and
 
 ### Training
 
-Located in `src/training/`:
+Located in `src/training/`. There is no "learning agent" class: the learner
+lives in the trainer, which binds a PPO policy to whichever team
+`training.trainable_team` names and drives that team's actions, while the
+opposing team's agent objects run their scripted `choose_action` unchanged.
+Exactly one team is trainable per run (`blue` XOR `red`; configs naming both
+or neither are rejected).
+
+| Direction | Config | Learner | Scripted opponent |
+|-----------|--------|---------|-------------------|
+| Blue learns | `config/benchmark_blue_mappo.yaml` | Blue: bearing-only sensing, `one_hop_mean` comms, benchmark tracking reward | Avoidant reds |
+| Blue learns (learned comms) | `config/benchmark_blue_mappo_gnn.yaml` | As above with end-to-end GraphSAGE communication | Avoidant reds |
+| Red learns | `config/benchmark_red_mappo.yaml` | Red: benchmark dwell/evasion reward | VAR-pursuit blues (privileged observation channel) |
+
+Components:
 
 * `src/training/marl/`: The TorchRL-backed team-selection trainer
   (`training.backend: "marl"`). One PPO implementation covers shared/separate
   actors x local/global critics (MAPPO with a privileged central critic is the
-  benchmark default; shared-actor IPPO is the control). Exactly one team is
-  trainable per run (`trainable_team: blue` XOR `red`); the opposing team runs
-  its scripted strategy. Fully seeded, headless, checkpoint/resume-capable.
+  benchmark default; shared-actor IPPO is the control). Fully seeded, headless,
+  checkpoint/resume-capable.
 * `src/training/trainer.py`: The legacy Stable-Baselines3 PPO path, kept for
   backward compatibility.
 
 Remote training runs on Modal (`infra/`); the same config trains on GPU
 remotely and debugs on CPU locally (`training.device: "auto"`).
+
+### Implementation Status
+
+Implemented and verified (every claim gated by tests and golden-trace
+regression):
+
+* All five communication schemes, wired into the parallel environment
+  (differentiable schemes run inside the actor, never in the environment).
+* Bearing-only sensing, discrete action space, and benchmark rewards — each
+  config-gated; defaults reproduce legacy behavior exactly.
+* Both learning directions train: learned blue improved its tracking reward in
+  a 50-update GPU run; learned red improves against a scripted blue in the
+  seeded learning-sanity tests. Neither has had a full-length training
+  campaign yet.
+
+Not yet implemented: the frozen benchmark scenario manifest and the
+communication ablation study; communication as an explicit RL action
+(message-action heads); protocol realism (loss, delay, bandwidth,
+fragmentation); asynchronous/event-driven communication; self-play.
 
 ## Quick Start
 
